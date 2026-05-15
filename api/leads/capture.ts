@@ -935,19 +935,19 @@ function getOpenStreetMapTagsForNiche(niche = '') {
   return matched?.tags || [['office', 'company'], ['shop', 'yes']];
 }
 
-function getWebsiteFromOsmTags(tags = {}) {
+function getWebsiteFromOsmTags(tags: Record<string, string> = {}) {
   return tags.website || tags['contact:website'] || tags.url || tags['contact:url'] || '';
 }
 
-function getPhoneFromOsmTags(tags = {}) {
+function getPhoneFromOsmTags(tags: Record<string, string> = {}) {
   return tags.phone || tags['contact:phone'] || tags.mobile || tags['contact:mobile'] || '';
 }
 
-function getEmailFromOsmTags(tags = {}) {
+function getEmailFromOsmTags(tags: Record<string, string> = {}) {
   return tags.email || tags['contact:email'] || '';
 }
 
-function buildOsmAddress(tags = {}) {
+function buildOsmAddress(tags: Record<string, string> = {}) {
   return [
     tags['addr:street'],
     tags['addr:housenumber'],
