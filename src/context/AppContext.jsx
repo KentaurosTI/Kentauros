@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { mockUsers } from '../data/mock-users';
 import { supabase } from '../services/supabaseClient';
 
@@ -9,13 +9,13 @@ export const AppProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState([]);
 
-  const addNotification = (title, message, type = 'info') => {
+  const addNotification = useCallback((title, message, type = 'info') => {
     const id = Date.now();
     setNotifications(prev => [...prev, { id, title, message, type }]);
     setTimeout(() => {
       setNotifications(prev => prev.filter(n => n.id !== id));
     }, 5000);
-  };
+  }, []);
 
   const syncUserProfile = async (profile) => {
     try {

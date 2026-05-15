@@ -36,6 +36,9 @@ const BLOCKED_DOMAINS = [
   'noticias', 'blogspot.', 'medium.com', 'wordpress.com', 'gov.br',
   'baidu.', 'yahoo.', 'pinterest.', 'reddit.', 'quora.', 'archive.',
   'boaempresa.', 'gympass.', 'wellhub.', 'helpcenter.', 'encontra', 'guiado',
+  'flashscore.', 'worldbank.', 'canaltech.', 'tecmundo.', 'spotify.',
+  'globo.', 'g1.', 'uol.', 'terra.', 'r7.', 'cnn.', 'folha.', 'estadao.',
+  'exame.', 'valor.', 'infomoney.', 'metropoles.', 'veja.', 'abril.',
 ];
 
 const GENERIC_SEARCH_TOKENS = new Set([
@@ -62,8 +65,30 @@ const DIRECTORY_OR_ARTICLE_PATTERNS = [
   /not[ií]cia/i,
   /revista/i,
   /portal/i,
+  /live scores?/i,
+  /fixtures?/i,
+  /resultados?/i,
+  /playlist/i,
+  /indicador/i,
+  /indicator/i,
+  /como acessar/i,
+  /veja/i,
+  /tutorial/i,
+  /retrospectiva/i,
+  /software/i,
+  /aplicativo/i,
   /cat[aá]logo/i,
 ];
+
+const ARTICLE_PATH_PATTERN = /\/(noticia|noticias|news|blog|blogs|artigo|artigos|materia|materias|apps?|software|team|teams|indicator|indicators|playlist|playlists|wiki|esporte|sports|politica|economia|tecnologia|tutorial|reviews?)(\/|$|-)/i;
+
+const OFFICIAL_PATH_PATTERN = /^(\/)?$|\/(contato|contact|fale-conosco|sobre|quem-somos|empresa|home|inicio|servicos|solucoes|produtos|imoveis|empreendimentos)(\/|$|-)/i;
+
+const TRUSTED_LOCAL_BUSINESS_SOURCES = new Set([
+  'Google Maps',
+  'Google Places API',
+  'OpenStreetMap',
+]);
 
 export const normalizeText = (value = '') => String(value || '')
   .normalize('NFD')
@@ -101,6 +126,23 @@ export const matchesCaptureIntent = (lead, config = {}) => {
 export const isDirectoryOrArticleCandidate = (candidate = {}) => {
   const text = `${candidate.name || ''} ${candidate.website || ''} ${candidate.description || ''}`;
   return DIRECTORY_OR_ARTICLE_PATTERNS.some(pattern => pattern.test(text));
+};
+
+export const isLikelyOfficialLeadCandidate = (candidate = {}) => {
+  const website = normalizeWebsiteUrl(candidate.website);
+  if (!website || isDirectoryOrArticleCandidate(candidate)) return false;
+  if (TRUSTED_LOCAL_BUSINESS_SOURCES.has(candidate.source)) return true;
+
+  try {
+    const url = new URL(website);
+    const path = url.pathname || '/';
+    const segments = path.split('/').filter(Boolean);
+    if (ARTICLE_PATH_PATTERN.test(path)) return false;
+    if (segments.length > 2) return false;
+    return OFFICIAL_PATH_PATTERN.test(path);
+  } catch {
+    return false;
+  }
 };
 
 export const buildSearchQueries = ({ niche, location }) => {
@@ -166,7 +208,7 @@ export const extractCandidatesFromSearchHtml = (html = '', source = 'Search') =>
     if (!website || seen.has(website)) continue;
     const title = match[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!title || title.length < 3) continue;
-    if (isDirectoryOrArticleCandidate({ name: title, website })) continue;
+    if (!isLikelyOfficialLeadCandidate({ name: title, website, source })) continue;
     seen.add(website);
     candidates.push({ name: title, website, source });
   }
@@ -214,7 +256,7 @@ export const extractCandidatesFromBingRss = (xml = '', source = 'Bing RSS') => {
       .trim();
     const website = normalizeWebsiteUrl(link);
     if (!website || seen.has(website) || !title) continue;
-    if (isDirectoryOrArticleCandidate({ name: title, website })) continue;
+    if (!isLikelyOfficialLeadCandidate({ name: title, website, source })) continue;
     seen.add(website);
     candidates.push({ name: title, website, source });
   }
@@ -544,7 +586,7 @@ export const captureLeads = async (config, options = {}) => {
         bodyText: `${candidate.name || ''} ${candidate.mapsAddress || ''}`,
       };
     }
-    if (!validated || isDirectoryOrArticleCandidate(validated)) continue;
+    if (!validated || !isLikelyOfficialLeadCandidate(validated)) continue;
     const key = normalizeWebsiteUrl(validated.website);
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -572,5 +614,12 @@ export const captureLeads = async (config, options = {}) => {
     isValid: true,
     isActive: true,
     status: 'qualified',
+    websiteValidation: {
+      isFunctional: true,
+      checkedAt: new Date().toISOString(),
+      finalUrl: lead.website,
+      contentLength: lead.html?.length || 0,
+      source: lead.source,
+    },
   }));
 };

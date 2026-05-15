@@ -5,12 +5,15 @@ import { mockLeads, mockClients, mockDiscoveries, mockProposals } from '../data/
 import { mockProjects } from '../data/mock-projects';
 import { mockBacklog, mockQATests, mockDeployments, mockTickets, mockAutomations } from '../data/mock-operations';
 import { supabase } from '../services/supabaseClient';
+import { clearDeletedLead, markLeadDeleted, mergeLeadSources, readDeletedLeadIds } from '../services/leadDeletionRegistry';
 
 const DataContext = createContext();
 const LEADS_TABLE = 'leads';
+const LEAD_CONTACTS_TABLE = 'lead_contacts';
 const OPERATIONAL_TABLE = 'operational_records';
 const LEARNING_TABLE = 'learning_events';
 let leadDatabaseUnavailable = false;
+let leadContactsDatabaseUnavailable = false;
 let operationalDatabaseUnavailable = false;
 
 const getLeadStorageKey = (tenantId, userId) => `kentauros_leads_${tenantId || 'no-tenant'}_${userId || 'no-user'}`;
@@ -113,6 +116,66 @@ const fromLeadRow = (row) => ({
   lastActivity: normalizeDate(row.last_activity),
 });
 
+const normalizeContactValue = (value = '') => String(value || '').trim();
+
+const getLeadContacts = (lead = {}) => {
+  const contacts = lead.contacts || {};
+  const rows = [
+    ...(contacts.emails || []).map(value => ({ type: 'email', value })),
+    ...(contacts.phones || []).map(value => ({ type: 'phone', value })),
+    ...(contacts.whatsappPhones || []).map(value => ({ type: 'whatsapp', value })),
+    lead.email ? { type: 'email', value: lead.email } : null,
+    lead.phone ? { type: 'phone', value: lead.phone } : null,
+    lead.whatsapp ? { type: 'whatsapp', value: lead.whatsapp } : null,
+  ].filter(Boolean);
+
+  const seen = new Set();
+  return rows
+    .map(contact => ({
+      type: contact.type,
+      value: normalizeContactValue(contact.value),
+    }))
+    .filter(contact => {
+      if (!contact.value) return false;
+      const key = `${contact.type}:${contact.value.toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const persistLeadContacts = async (lead) => {
+  if (leadContactsDatabaseUnavailable || !lead?.id) return;
+
+  const contacts = getLeadContacts(lead);
+  try {
+    const { error: deleteError } = await supabase
+      .from(LEAD_CONTACTS_TABLE)
+      .delete()
+      .eq('lead_id', lead.id);
+
+    if (deleteError) throw deleteError;
+
+    if (!contacts.length) return;
+
+    const { error } = await supabase
+      .from(LEAD_CONTACTS_TABLE)
+      .insert(contacts.map(contact => ({
+        lead_id: lead.id,
+        contact_type: contact.type,
+        contact_value: contact.value,
+      })));
+
+    if (error) throw error;
+  } catch (error) {
+    if (error.code === 'PGRST205' || error.code === '42P01') {
+      leadContactsDatabaseUnavailable = true;
+      return;
+    }
+    throw error;
+  }
+};
+
 const persistLead = async (lead) => {
   if (leadDatabaseUnavailable) {
     return lead;
@@ -131,7 +194,9 @@ const persistLead = async (lead) => {
     throw error;
   }
 
-  return fromLeadRow(data);
+  const savedLead = fromLeadRow(data);
+  await persistLeadContacts({ ...lead, id: savedLead.id });
+  return savedLead;
 };
 
 const deleteRemoteLead = async (id) => {
@@ -294,14 +359,16 @@ export const DataProvider = ({ children }) => {
     if (tenantId) {
       const loadLeads = async () => {
         const localLeads = readLocalLeads(tenantId, user?.id);
+        const deletedLeadIds = readDeletedLeadIds(localStorage, tenantId, user?.id);
         try {
           const remoteLeads = await loadRemoteLeads(tenantId, user?.id, user?.role);
+          const nextLeads = mergeLeadSources(remoteLeads, localLeads, deletedLeadIds);
           const remoteIds = new Set(remoteLeads.map(lead => lead.id));
-          const pendingLocalLeads = localLeads.filter(lead => !remoteIds.has(lead.id));
-          const nextLeads = [...remoteLeads, ...pendingLocalLeads];
+          const pendingLocalLeads = mergeLeadSources([], localLeads, deletedLeadIds)
+            .filter(lead => !remoteIds.has(lead.id));
 
           if (!cancelled) {
-            setLeads(nextLeads.length ? nextLeads : filterByTenant(mockLeads));
+            setLeads(nextLeads.length ? nextLeads : deletedLeadIds.size ? [] : filterByTenant(mockLeads));
             writeLocalLeads(tenantId, user?.id, nextLeads);
           }
 
@@ -312,7 +379,8 @@ export const DataProvider = ({ children }) => {
           });
         } catch (err) {
           if (!cancelled) {
-            setLeads(localLeads.length ? localLeads : filterByTenant(mockLeads));
+            const activeLocalLeads = mergeLeadSources([], localLeads, deletedLeadIds);
+            setLeads(activeLocalLeads.length ? activeLocalLeads : deletedLeadIds.size ? [] : filterByTenant(mockLeads));
           }
           console.warn('Lead database load failed. Using local cache:', err.message);
         }
@@ -392,6 +460,41 @@ export const DataProvider = ({ children }) => {
     };
   }, [tenantId, user?.id]);
 
+  useEffect(() => {
+    if (!tenantId || leadDatabaseUnavailable) return undefined;
+
+    const refreshLeadsFromRemote = async () => {
+      try {
+        const remoteLeads = await loadRemoteLeads(tenantId, user?.id, user?.role);
+        const localLeads = readLocalLeads(tenantId, user?.id);
+        const deletedLeadIds = readDeletedLeadIds(localStorage, tenantId, user?.id);
+        const nextLeads = mergeLeadSources(remoteLeads, localLeads, deletedLeadIds);
+        setLeads(nextLeads.length ? nextLeads : deletedLeadIds.size ? [] : filterByTenant(mockLeads));
+        writeLocalLeads(tenantId, user?.id, nextLeads);
+      } catch (err) {
+        console.warn('Lead realtime refresh failed:', err.message);
+      }
+    };
+
+    const channel = supabase
+      .channel(`leads-live-${tenantId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: LEADS_TABLE, filter: `tenant_id=eq.${tenantId}` },
+        () => {
+          refreshLeadsFromRemote();
+        }
+      )
+      .subscribe();
+
+    const pollInterval = setInterval(refreshLeadsFromRemote, 30000);
+
+    return () => {
+      clearInterval(pollInterval);
+      supabase.removeChannel(channel);
+    };
+  }, [tenantId, user?.id, user?.role]);
+
   // Helper para atualizar estados genericamente
   const updateEntity = (setter, entityName) => (id, data) => {
     setter(prev => {
@@ -444,7 +547,7 @@ export const DataProvider = ({ children }) => {
   };
 
   const addEntity = (setter, entityName) => (data) => {
-    const newId = data.id || crypto.randomUUID?.() || `lead_${Date.now()}`;
+      const newId = data.id || crypto.randomUUID?.() || `lead_${Date.now()}`;
     const newItem = {
       id: newId,
       tenant_id: tenantId,
@@ -455,6 +558,9 @@ export const DataProvider = ({ children }) => {
     };
 
     logAudit('CREATE', 'Data', entityName, newId, null, data);
+    if (entityName === 'Lead') {
+      clearDeletedLead(localStorage, tenantId, user?.id, newId);
+    }
     const learningEvent = {
       id: crypto.randomUUID?.() || `learn_${Date.now()}`,
       tenant_id: tenantId,
@@ -532,6 +638,7 @@ export const DataProvider = ({ children }) => {
       }
 
       if (entityName === 'Lead') {
+        markLeadDeleted(localStorage, tenantId, user?.id, id);
         writeLocalLeads(tenantId, user?.id, next);
         deleteRemoteLead(id).catch(err => {
           console.warn('Lead database delete failed:', err.message);
@@ -661,6 +768,33 @@ export const DataProvider = ({ children }) => {
               status: 'pending'
             }));
           return [...filtered, ...formattedResults];
+        });
+      },
+      appendCaptureResults: (jobId, results) => {
+        if (!results || !Array.isArray(results)) {
+          console.warn('[DataContext] appendCaptureResults: results inválido', results);
+          return;
+        }
+        setCaptureResults(prev => {
+          const existingKeys = new Set(prev
+            .filter(r => r.job_id === jobId)
+            .map(r => r.captureIdentity || r.website || r.email || r.id));
+          const formattedResults = results
+            .filter(res => res != null)
+            .filter(res => {
+              const key = res.captureIdentity || res.website || res.email || res.id;
+              if (!key || existingKeys.has(key)) return false;
+              existingKeys.add(key);
+              return true;
+            })
+            .map(res => ({
+              id: `res_${Math.random().toString(36).substring(2, 11)}`,
+              job_id: jobId,
+              tenant_id: tenantId,
+              ...res,
+              status: 'pending'
+            }));
+          return [...prev, ...formattedResults];
         });
       },
       clearCaptureResults: (jobId) => {

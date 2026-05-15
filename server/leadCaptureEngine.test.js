@@ -9,6 +9,7 @@ import {
   extractContactLinks,
   extractContactsFromHtml,
   isDirectoryOrArticleCandidate,
+  isLikelyOfficialLeadCandidate,
   matchesCaptureIntent,
   normalizeWebsiteUrl,
   qualifiesLead,
@@ -59,6 +60,18 @@ test('rejects directory and article-like candidates', () => {
     name: 'Academia Pinheiros',
     website: 'https://academiapinheiros.com.br',
   }), false);
+  assert.equal(isLikelyOfficialLeadCandidate({
+    name: 'Basketball, USA: Detroit Pistons live scores, results, fixtures',
+    website: 'https://flashscore.com/team/detroit-pistons',
+  }), false);
+  assert.equal(isLikelyOfficialLeadCandidate({
+    name: 'Spotify tem playlist com as musicas mais ouvidas da sua conta',
+    website: 'https://canaltech.com.br/apps/spotify-tem-playlist',
+  }), false);
+  assert.equal(isLikelyOfficialLeadCandidate({
+    name: 'Imobiliaria Alfa',
+    website: 'https://imobiliariaalfa.com.br/contato',
+  }), true);
 });
 
 test('extracts candidate websites from Bing RSS', () => {
@@ -140,6 +153,7 @@ test('captures exact requested quantity by skipping invalid candidates', async (
 
   assert.equal(leads.length, 2);
   assert.ok(leads.every(lead => lead.website && lead.email && lead.isValid && lead.status === 'qualified'));
+  assert.ok(leads.every(lead => lead.websiteValidation?.isFunctional === true));
 });
 
 test('uses contact subpages before qualifying a lead', async () => {

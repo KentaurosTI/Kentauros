@@ -660,13 +660,13 @@ async function scrapeMultipleSites(leads, maxConcurrent = 5) {
 function getLeadsFromLocalDatabase(niche, location, quantity) {
   // Always use local database as fallback when no real source is configured
   // Only skip if we have a real source and are in production
-  if (CONFIG.isProduction && hasRealSource()) {
+  if (isProductionCapture() && hasRealSource()) {
     console.log('[API] Produção com fonte real configurada - usando fonte real, não banco local');
     return []; // Let the real source handle it
   }
 
   console.log('[API] Usando banco local como fallback');
-  console.log('[API] Produção:', CONFIG.isProduction, '| Fonte real:', hasRealSource());
+  console.log('[API] Produção:', isProductionCapture(), '| Fonte real:', hasRealSource());
 
   const normalizedNiche = niche?.toLowerCase().trim() || '';
   const normalizedLocation = location?.toLowerCase().trim() || '';
@@ -1252,7 +1252,7 @@ export async function GET() {
     timestamp: new Date().toISOString(),
     services: {
       supabase: Boolean(supabase),
-      localDatabase: !CONFIG.isProduction || !hasRealSource(),
+      localDatabase: !isProductionCapture() || !hasRealSource(),
       realSourcesConfigured: sources,
       googlePlacesConfigured: Boolean(CONFIG.GOOGLE_PLACES_API_KEY),
       serpapiConfigured: Boolean(CONFIG.SERPAPI_API_KEY),
@@ -1318,7 +1318,7 @@ export async function POST(req) {
     console.log('[API] Quantidade:', requestedQuantity);
     console.log('[API] Pool de validação:', capturePoolSize);
     console.log('[API] Requisitos:', JSON.stringify(contactRequirements));
-    console.log('[API] Produção:', CONFIG.isProduction);
+    console.log('[API] Produção:', isProductionCapture());
     console.log('[API] Fontes configuradas:', sources.length > 0 ? sources : 'NENHUMA');
     console.log('[API] Google Places:', CONFIG.GOOGLE_PLACES_API_KEY ? 'SIM' : 'NÃO');
     console.log('[API] SerpAPI:', CONFIG.SERPAPI_API_KEY ? 'SIM' : 'NÃO');
@@ -1385,6 +1385,16 @@ export async function POST(req) {
           sourceUsed = 'serpapi';
           console.log('[API] SerpAPI retornou', serpResults.length, 'resultados');
         }
+      }
+    }
+
+    if (isProductionCapture() && sourceUsed === 'none') {
+      stats.sourcesAttempted.push('openstreetmap');
+      const openStreetMapResults = await collectOpenStreetMapLeads(niche, location, capturePoolSize);
+      if (openStreetMapResults.length > 0) {
+        rawLeads = openStreetMapResults;
+        sourceUsed = 'openstreetmap';
+        console.log('[API] OpenStreetMap retornou', openStreetMapResults.length, 'resultados');
       }
     }
 
@@ -1506,7 +1516,7 @@ export async function POST(req) {
       }
     }
 
-    if (rawLeads.length > 0 && !hasRealSource()) {
+    if (rawLeads.length > 0 && !hasRealSource() && sourceUsed !== 'openstreetmap') {
       const beforeDemoFill = rawLeads.length;
       rawLeads = mergeDemoWebsiteLeads(rawLeads, niche, location, capturePoolSize);
       if (rawLeads.length > beforeDemoFill) {
@@ -1522,7 +1532,7 @@ export async function POST(req) {
     if (rawLeads.length === 0) {
       console.log('[API] NENHUM CANDIDATO ENCONTRADO');
 
-      if (CONFIG.isProduction && !hasRealSource()) {
+      if (isProductionCapture() && !hasRealSource()) {
         // Produção sem fonte configurada
         return Response.json({
           success: false,
@@ -1548,7 +1558,7 @@ export async function POST(req) {
         }, { status: 200 });
       }
 
-      if (!CONFIG.isProduction) {
+      if (!isProductionCapture()) {
         // Dev - retorna erro com instruções
         return Response.json({
           success: false,

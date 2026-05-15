@@ -5,6 +5,10 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { captureLeads } from './leadCaptureEngine.js';
+import { validateAndQualifyLeads } from './leadQualification.js';
+import { collectExpandedCandidates } from './captureCandidateExpansion.js';
+import { collectCapLeadMapsCandidates } from './capLeadMapsCapture.js';
+import { ensureCapLeadPackage, getCapLeadDownloadConfig } from './capLeadDownload.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +20,32 @@ const app = express();
 const port = process.env.PORT || 3001;
 const GMAIL_MIN_INTERVAL_MS = Number(process.env.GMAIL_MIN_INTERVAL_MS || 12000);
 let nextAvailableSendAt = Date.now();
+
+const getCapturePoolSize = (requestedQuantity) =>
+  Math.min(100, Math.max(requestedQuantity * 4, requestedQuantity + 40));
+
+const getExpandedCandidateTarget = (requestedQuantity) =>
+  Math.min(3000, Math.max(requestedQuantity * 100, 1000));
+
+const getMapsCandidateTarget = (requestedQuantity) =>
+  Math.min(60, Math.max(requestedQuantity * 2, requestedQuantity + 12));
+
+const getLeadIdentity = (lead = {}) =>
+  String(lead.website || lead.email || lead.id || lead.name || '')
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/$/, '');
+
+const mergeUniqueLeads = (...groups) => {
+  const seen = new Set();
+  return groups.flat().filter((lead) => {
+    const identity = getLeadIdentity(lead);
+    if (!identity || seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+};
 
 app.use(cors());
 app.use(express.json());
@@ -37,6 +67,19 @@ app.get('/api/system-health', (req, res) => {
       },
     },
   });
+});
+
+app.get('/api/caplead/download', async (req, res) => {
+  try {
+    const config = await ensureCapLeadPackage(getCapLeadDownloadConfig());
+    res.download(config.packagePath, config.filename);
+  } catch (error) {
+    console.error('[CapLead Download] Failed:', error);
+    res.status(404).json({
+      error: 'CAPLEAD_DOWNLOAD_UNAVAILABLE',
+      message: 'Pacote do CapLead não encontrado. Gere a build mais recente antes de tentar o download.',
+    });
+  }
 });
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -174,22 +217,332 @@ function getLeadsFromLocalDatabase(niche, location, quantity) {
     if (filtered.length > 0) candidates = filtered;
   }
 
-  // Gerar leads com emails e telefones
-  const dddMap = { 'SP': '11', 'RJ': '21', 'MG': '31', 'PR': '41', 'RS': '51', 'PE': '81' };
-
   return candidates.slice(0, quantity).map((c, idx) => {
-    const ddd = dddMap[c.state] || '11';
     return {
+      id: `local_candidate_${Date.now()}_${idx}`,
       name: c.name,
       website: `https://${c.domain}`,
-      email: `contato@${c.domain}`,
-      phone: `(${ddd}) 9${Math.floor(4000 + Math.random() * 5999)}-${Math.floor(1000 + Math.random() * 8999)}`,
-      whatsapp: `(${ddd}) 9${Math.floor(4000 + Math.random() * 5999)}-${Math.floor(1000 + Math.random() * 8999)}`,
-      source: 'Base de Dados',
+      source: 'Base de Dados - candidato',
       location: `${c.city}, ${c.state}`,
       niche: c.desc,
+      city: c.city,
+      state: c.state,
+      description: c.desc,
     };
   });
+}
+
+async function executeLeadCapture(config, captureRunId, onProgress = () => {}) {
+  const quantity = Math.max(1, Math.min(Number(config.quantity || 20), 100));
+  const capturePoolSize = getCapturePoolSize(quantity);
+  const expandedCandidateTarget = getExpandedCandidateTarget(quantity);
+  const startTime = Date.now();
+  const stats = {
+    requested: quantity,
+    candidatesFound: 0,
+    candidatesScanned: 0,
+    domainValidated: 0,
+    domainRejected: 0,
+    duplicatesRemoved: 0,
+    rejectionReasons: {},
+    errors: [],
+    source: 'local_database',
+    capturePoolSize,
+    expandedCandidateTarget,
+  };
+
+  let rawLeads = [];
+
+  onProgress({
+    progress: 15,
+    phaseLabel: `Iniciando captura Maps-first: meta ${quantity} leads validados`,
+    stats,
+    total_found: 0,
+    total_valid: 0,
+  });
+
+  try {
+    onProgress({
+      progress: 20,
+      phaseLabel: 'Pesquisando empresas reais no Google Maps...',
+      stats,
+      total_found: 0,
+      total_valid: 0,
+    });
+
+    const mapsTarget = getMapsCandidateTarget(quantity);
+    const mapsCandidates = await collectCapLeadMapsCandidates({
+      niche: config.niche,
+      location: config.location,
+      contactRequirements: config.contactRequirements || { email: true },
+    }, {
+      targetCount: mapsTarget,
+      maxPlacesPerQuery: Math.max(quantity * 3, 50),
+      maxScrollsPerQuery: 10,
+      onProgress: (mapsProgress) => {
+        const found = Number(mapsProgress.found || 0);
+        const mapsPercent = Number(mapsProgress.percent || 0);
+        onProgress({
+          phase: mapsProgress.phase || 'searching',
+          progress: Math.max(20, Math.min(58, 20 + Math.round(mapsPercent * 0.38))),
+          phaseLabel: mapsProgress.message || `Google Maps: ${found}/${mapsTarget} candidatos oficiais`,
+          total_found: found,
+          total_valid: 0,
+          stats: {
+            ...stats,
+            candidatesFound: found,
+            source: 'google_maps_caplead',
+            mapsPhase: mapsProgress.phase,
+            currentLead: mapsProgress.currentLead || '',
+          },
+        });
+      },
+    });
+
+    rawLeads = [...rawLeads, ...mapsCandidates];
+    stats.source = 'google_maps_caplead';
+    stats.mapsCandidates = mapsCandidates.length;
+  } catch (mapsError) {
+    stats.errors.push(`maps: ${mapsError.message}`);
+    onProgress({
+      progress: 24,
+      phaseLabel: `Google Maps indisponível (${mapsError.message}). Usando fallback de captura.`,
+      stats,
+      total_found: rawLeads.length,
+      total_valid: 0,
+    });
+  }
+
+  if (rawLeads.length < capturePoolSize) try {
+    onProgress({
+      progress: rawLeads.length >= capturePoolSize ? 48 : 35,
+      phaseLabel: rawLeads.length >= capturePoolSize
+        ? `${rawLeads.length} candidatos do Maps coletados. Reforçando validação.`
+        : `Maps coletou ${rawLeads.length}/${capturePoolSize}. Complementando no engine.`,
+      stats,
+    });
+
+    const engineLeads = await Promise.race([
+      captureLeads({
+        niche: config.niche,
+        location: config.location,
+        quantity: Math.max(1, capturePoolSize - rawLeads.length),
+        contactRequirements: config.contactRequirements || { email: true },
+        captureMetric: config.captureMetric || 'website_reformulation',
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 100000)),
+    ]);
+    rawLeads = [...rawLeads, ...engineLeads];
+    stats.engineCandidates = engineLeads.length;
+  } catch (captureError) {
+    stats.errors.push(`engine: ${captureError.message}`);
+  }
+
+  onProgress({
+    progress: 40,
+    phaseLabel: `${rawLeads.length} candidatos iniciais encontrados. Complementando fontes...`,
+    stats: { ...stats, candidatesFound: rawLeads.length, candidatesScanned: rawLeads.length },
+    total_found: rawLeads.length,
+  });
+
+  if (rawLeads.length < capturePoolSize) {
+    const localLeads = getLeadsFromLocalDatabase(
+      config.niche,
+      config.location,
+      capturePoolSize - rawLeads.length
+    );
+    rawLeads = [...rawLeads, ...localLeads];
+  }
+
+  if (rawLeads.length < quantity) {
+    onProgress({
+      progress: 50,
+      phaseLabel: `Buscando candidatos expandidos em fontes públicas (${expandedCandidateTarget} alvo)`,
+      stats: { ...stats, candidatesFound: rawLeads.length, candidatesScanned: rawLeads.length },
+      total_found: rawLeads.length,
+    });
+
+    const expandedCandidates = await collectExpandedCandidates({
+      niche: config.niche,
+      location: config.location,
+    }, {
+      targetCount: expandedCandidateTarget,
+    });
+    rawLeads = [...rawLeads, ...expandedCandidates];
+  }
+
+  stats.candidatesFound = rawLeads.length;
+  stats.candidatesScanned = rawLeads.length;
+
+  onProgress({
+    progress: 65,
+    phaseLabel: `${rawLeads.length} candidatos coletados. Validando sites e contatos...`,
+    stats,
+    total_found: rawLeads.length,
+  });
+
+  const {
+    qualified,
+    rejectionReasons,
+    rejectedCount,
+    domainValidated,
+    scannedCount,
+  } = await validateAndQualifyLeads(rawLeads, {
+    quantity,
+    contactRequirements: {
+      website: true,
+      ...(config.contactRequirements || { email: true }),
+    },
+    concurrency: 10,
+    maxCandidatesToScan: expandedCandidateTarget,
+    captureConfig: config,
+    onProgress: ({ scanned, qualified: validCount, totalCandidates }) => {
+      const validationProgress = totalCandidates
+        ? Math.min(98, 65 + Math.round((scanned / totalCandidates) * 33))
+        : 65;
+      onProgress({
+        phase: 'extracting',
+        progress: validationProgress,
+        phaseLabel: `Validando sites: ${scanned}/${totalCandidates} candidatos escaneados · ${validCount}/${quantity} leads aprovados`,
+        total_found: scanned,
+        total_valid: validCount,
+        stats: {
+          ...stats,
+          candidatesScanned: scanned,
+          domainValidated: validCount,
+          leadsQualified: validCount,
+        },
+      });
+    },
+    onLead: (lead, validCount) => {
+      onProgress({
+        phase: 'saving',
+        type: 'lead',
+        lead,
+        validCount,
+        progress: Math.min(98, 65 + Math.round((validCount / quantity) * 30)),
+        phaseLabel: `Lead validado: ${validCount}/${quantity} aprovados`,
+        total_valid: validCount,
+        total_found: stats.candidatesScanned,
+      });
+    },
+  });
+
+  let finalQualified = qualified;
+  let relaxedFillCount = 0;
+
+  if (qualified.length < quantity) {
+    onProgress({
+      progress: 96,
+      phaseLabel: `Completando a meta com sites oficiais funcionais: ${qualified.length}/${quantity}`,
+      total_found: scannedCount,
+      total_valid: qualified.length,
+      stats,
+    });
+
+    const relaxedResult = await validateAndQualifyLeads(rawLeads, {
+      quantity,
+      contactRequirements: { website: true },
+      concurrency: 10,
+      maxCandidatesToScan: expandedCandidateTarget,
+      captureConfig: config,
+    });
+    const strictIds = new Set(qualified.map(getLeadIdentity));
+    const relaxedFill = relaxedResult.qualified
+      .filter(lead => !strictIds.has(getLeadIdentity(lead)))
+      .slice(0, quantity - qualified.length);
+
+    relaxedFillCount = relaxedFill.length;
+    finalQualified = mergeUniqueLeads(qualified, relaxedFill).slice(0, quantity);
+
+    relaxedFill.forEach((lead, index) => {
+      onProgress({
+        phase: 'saving',
+        type: 'lead',
+        lead,
+        validCount: qualified.length + index + 1,
+        progress: Math.min(99, 96 + Math.round(((index + 1) / Math.max(relaxedFill.length, 1)) * 3)),
+        phaseLabel: `Lead oficial validado: ${qualified.length + index + 1}/${quantity}`,
+        total_valid: qualified.length + index + 1,
+        total_found: scannedCount,
+      });
+    });
+  }
+
+  stats.rejectionReasons = rejectionReasons;
+  stats.domainValidated = domainValidated;
+  stats.domainRejected = rejectedCount;
+  stats.candidatesScanned = scannedCount;
+  stats.leadsQualified = finalQualified.length;
+  stats.strictQualified = qualified.length;
+  stats.websiteOnlyFill = relaxedFillCount;
+
+  const duration = Date.now() - startTime;
+
+  onProgress({
+    phase: 'saving',
+    progress: 99,
+    phaseLabel: `Salvando lote de captura: ${finalQualified.length}/${quantity} leads`,
+    total_found: scannedCount || rawLeads.length,
+    total_valid: finalQualified.length,
+    stats,
+  });
+
+  if (finalQualified.length > 0 && finalQualified.length < quantity) {
+    return {
+      success: true,
+      captureRunId,
+      errorCode: null,
+      requested: quantity,
+      qualified: finalQualified,
+      qualifiedCount: finalQualified.length,
+      totalFound: finalQualified.length,
+      totalScanned: scannedCount || rawLeads.length,
+      rejectedCount,
+      rejectionReasons: stats.rejectionReasons,
+      partial: true,
+      message: `A captura encontrou ${finalQualified.length} de ${quantity} leads com site funcional. Eles foram liberados para revisao no grid.`,
+      stats,
+      duration,
+    };
+  }
+
+  if (finalQualified.length < quantity) {
+    return {
+      success: finalQualified.length > 0,
+      captureRunId,
+      errorCode: finalQualified.length > 0 ? null : 'INSUFFICIENT_VALIDATED_LEADS',
+      requested: quantity,
+      qualified: finalQualified,
+      qualifiedCount: finalQualified.length,
+      totalFound: finalQualified.length,
+      totalScanned: scannedCount || rawLeads.length,
+      rejectedCount,
+      rejectionReasons: stats.rejectionReasons,
+      partial: true,
+      message: `A captura validou ${finalQualified.length} de ${quantity} leads solicitados. O grid só será liberado quando houver exatamente ${quantity} leads com site funcional.`,
+      stats,
+      duration,
+    };
+  }
+
+  return {
+    success: true,
+    captureRunId,
+    requested: quantity,
+    qualified: finalQualified.slice(0, quantity),
+    qualifiedCount: quantity,
+    totalFound: quantity,
+    totalScanned: scannedCount || rawLeads.length,
+    rejectedCount,
+    rejectionReasons: stats.rejectionReasons,
+    partial: false,
+    message: relaxedFillCount
+      ? `${quantity} leads oficiais com site funcional encontrados. ${qualified.length} possuem todos os contatos exigidos.`
+      : `${quantity} leads qualificados encontrados.`,
+    stats,
+    duration,
+  };
 }
 
 // ========================================
@@ -197,11 +550,14 @@ function getLeadsFromLocalDatabase(niche, location, quantity) {
 // ========================================
 app.post('/api/leads/capture', async (req, res) => {
   const config = req.body || {};
+  const captureRunId = config.captureRunId
+    || `capture_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
   // Validar campos obrigatórios
   if (!config.niche || !config.location) {
     return res.status(400).json({
       success: false,
+      captureRunId,
       error: 'Campos obrigatórios: niche, location',
       requested: config.quantity || 20,
       qualified: [],
@@ -216,12 +572,17 @@ app.post('/api/leads/capture', async (req, res) => {
   }
 
   const quantity = Math.max(1, Math.min(Number(config.quantity || 20), 100));
+  const capturePoolSize = getCapturePoolSize(quantity);
+  const expandedCandidateTarget = getExpandedCandidateTarget(quantity);
 
   console.log('[API] ========================================');
   console.log('[API] INICIANDO CAPTURA DE LEADS');
+  console.log('[API] captureRunId:', captureRunId);
   console.log('[API] Nicho:', config.niche);
   console.log('[API] Localização:', config.location);
   console.log('[API] Quantidade solicitada:', quantity);
+  console.log('[API] Pool de validação:', capturePoolSize);
+  console.log('[API] Pool expandido de candidatos:', expandedCandidateTarget);
   console.log('[API] Requisitos:', JSON.stringify(config.contactRequirements || {}));
   console.log('[API] ========================================');
 
@@ -241,75 +602,158 @@ app.post('/api/leads/capture', async (req, res) => {
   try {
     let rawLeads = [];
 
-    // Tentar captura via engine (com timeout)
-    const capturePromise = captureLeads({
-      niche: config.niche,
-      location: config.location,
-      quantity: quantity,
-      contactRequirements: config.contactRequirements || { email: true },
-      captureMetric: config.captureMetric || 'website_reformulation',
-    });
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('TIMEOUT')), 15000)
-    );
-
     try {
-      rawLeads = await Promise.race([capturePromise, timeoutPromise]);
-      console.log('[API] Captura via engine: OK,', rawLeads.length, 'leads');
-      stats.source = 'web_scraping';
+      console.log('[API] Captura Maps-first estilo CapLead...');
+      const mapsTarget = getMapsCandidateTarget(quantity);
+      const mapsCandidates = await collectCapLeadMapsCandidates({
+        niche: config.niche,
+        location: config.location,
+        contactRequirements: config.contactRequirements || { email: true },
+      }, {
+        targetCount: mapsTarget,
+        maxPlacesPerQuery: Math.max(quantity * 3, 50),
+        maxScrollsPerQuery: 10,
+      });
+      rawLeads = [...rawLeads, ...mapsCandidates];
+      stats.source = 'google_maps_caplead';
+      stats.mapsCandidates = mapsCandidates.length;
+      console.log('[API] Captura Maps-first:', mapsCandidates.length, 'candidatos');
+    } catch (mapsError) {
+      console.log('[API] Captura Maps-first falhou:', mapsError.message);
+      stats.errors.push(`maps: ${mapsError.message}`);
+    }
+
+    if (rawLeads.length < capturePoolSize) try {
+      // Tentar captura via engine (com timeout)
+      const capturePromise = captureLeads({
+        niche: config.niche,
+        location: config.location,
+        quantity: capturePoolSize - rawLeads.length,
+        contactRequirements: config.contactRequirements || { email: true },
+        captureMetric: config.captureMetric || 'website_reformulation',
+      });
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT')), 100000)
+      );
+
+      const engineLeads = await Promise.race([capturePromise, timeoutPromise]);
+      rawLeads = [...rawLeads, ...engineLeads];
+      console.log('[API] Captura via engine: OK,', engineLeads.length, 'leads');
+      stats.engineCandidates = engineLeads.length;
     } catch (captureError) {
       console.log('[API] Captura via engine falhou/timout:', captureError.message);
-      console.log('[API] Usando database local como fallback');
-      stats.source = 'local_database';
+      console.log('[API] Usando database local apenas como candidatos para validação real');
+      stats.errors.push(`engine: ${captureError.message}`);
     }
 
     // Se não temos leads suficientes, usar database local
-    if (rawLeads.length < quantity) {
-      console.log('[API] Complementando com database local');
+    if (rawLeads.length < capturePoolSize) {
+      console.log('[API] Complementando candidatos com database local');
       const localLeads = getLeadsFromLocalDatabase(
         config.niche,
         config.location,
-        quantity - rawLeads.length
+        capturePoolSize - rawLeads.length
       );
       rawLeads = [...rawLeads, ...localLeads];
     }
 
-    // Garantir que temos a quantidade solicitada
     if (rawLeads.length < quantity) {
-      // Gerar mais leads genéricos
-      const genericLeads = getLeadsFromLocalDatabase('academias', config.location, quantity - rawLeads.length);
-      rawLeads = [...rawLeads, ...genericLeads];
+      console.log('[API] Buscando candidatos expandidos em fontes públicas...');
+      const expandedCandidates = await collectExpandedCandidates({
+        niche: config.niche,
+        location: config.location,
+      }, {
+        targetCount: expandedCandidateTarget,
+      });
+      console.log('[API] Candidatos expandidos encontrados:', expandedCandidates.length);
+      rawLeads = [...rawLeads, ...expandedCandidates];
     }
 
     console.log('[API] Total de leads brutos:', rawLeads.length);
     console.log('[API] ========================================');
 
-    // Filter and qualify leads based on contact requirements
-    const emailRequired = config.contactRequirements?.email !== false;
+    stats.candidatesFound = rawLeads.length;
+    stats.candidatesScanned = rawLeads.length;
 
-    const qualified = rawLeads.filter(lead => {
-      if (emailRequired && !lead.email) return false;
-      return true;
+    const {
+      qualified,
+      rejectionReasons,
+      rejectedCount,
+      domainValidated,
+    } = await validateAndQualifyLeads(rawLeads, {
+      quantity,
+      contactRequirements: {
+        website: true,
+        ...(config.contactRequirements || { email: true }),
+      },
+      concurrency: 10,
+      maxCandidatesToScan: expandedCandidateTarget,
+      captureConfig: config,
     });
+    stats.rejectionReasons = rejectionReasons;
+    stats.domainValidated = domainValidated;
+    stats.domainRejected = rejectedCount;
+
+    let finalQualified = qualified;
+    let relaxedFillCount = 0;
+
+    if (finalQualified.length < quantity) {
+      const relaxedResult = await validateAndQualifyLeads(rawLeads, {
+        quantity,
+        contactRequirements: { website: true },
+        concurrency: 10,
+        maxCandidatesToScan: expandedCandidateTarget,
+        captureConfig: config,
+      });
+      const strictIds = new Set(qualified.map(getLeadIdentity));
+      const relaxedFill = relaxedResult.qualified
+        .filter(lead => !strictIds.has(getLeadIdentity(lead)))
+        .slice(0, quantity - qualified.length);
+      relaxedFillCount = relaxedFill.length;
+      finalQualified = mergeUniqueLeads(qualified, relaxedFill).slice(0, quantity);
+    }
 
     const duration = Date.now() - startTime;
+    stats.leadsQualified = finalQualified.length;
+    stats.strictQualified = qualified.length;
+    stats.websiteOnlyFill = relaxedFillCount;
 
-    console.log('[API] Leads qualificados:', qualified.length);
+    console.log('[API] Leads qualificados:', finalQualified.length);
+
+    if (finalQualified.length < quantity) {
+      return res.status(200).json({
+        success: finalQualified.length > 0,
+        captureRunId,
+        errorCode: finalQualified.length > 0 ? null : 'INSUFFICIENT_VALIDATED_LEADS',
+        requested: quantity,
+        qualified: finalQualified,
+        qualifiedCount: finalQualified.length,
+        totalFound: finalQualified.length,
+        totalScanned: rawLeads.length,
+        rejectedCount,
+        rejectionReasons: stats.rejectionReasons,
+        partial: true,
+        message: `A captura validou ${qualified.length} de ${quantity} leads solicitados. O grid só será liberado quando houver exatamente ${quantity} leads com site funcional e contatos exigidos. Amplie o nicho/localização ou configure fontes reais para completar a meta.`,
+        stats,
+        duration,
+      });
+    }
 
     const response = {
       success: true,
+      captureRunId,
       requested: quantity,
-      qualified,
-      qualifiedCount: qualified.length,
-      totalFound: qualified.length,
+      qualified: finalQualified.slice(0, quantity),
+      qualifiedCount: quantity,
+      totalFound: quantity,
       totalScanned: rawLeads.length,
-      rejectedCount: rawLeads.length - qualified.length,
+      rejectedCount,
       rejectionReasons: stats.rejectionReasons,
-      partial: qualified.length < quantity,
-      message: qualified.length === quantity
-        ? `${qualified.length} leads qualificados encontrados.`
-        : `Encontramos ${qualified.length} leads válidos de ${quantity} solicitados. Amplie a localização ou reduza requisitos mínimos.`,
+      partial: false,
+      message: relaxedFillCount
+        ? `${quantity} leads oficiais com site funcional encontrados. ${qualified.length} possuem todos os contatos exigidos.`
+        : `${quantity} leads qualificados encontrados.`,
       stats,
       duration,
     };
@@ -323,6 +767,7 @@ app.post('/api/leads/capture', async (req, res) => {
 
     res.status(500).json({
       success: false,
+      captureRunId,
       error: error.message,
       requested: quantity,
       qualified: [],
@@ -335,6 +780,64 @@ app.post('/api/leads/capture', async (req, res) => {
       message: 'Erro interno na captura. Tente novamente ou entre em contato com o suporte.',
       stats,
     });
+  }
+});
+
+app.post('/api/leads/capture-stream', async (req, res) => {
+  const config = req.body || {};
+  const captureRunId = config.captureRunId
+    || `capture_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+
+  if (!config.niche || !config.location) {
+    return res.status(400).json({
+      success: false,
+      captureRunId,
+      errorCode: 'MISSING_REQUIRED_FIELDS',
+      message: 'Campos niche e location são obrigatórios.',
+    });
+  }
+
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = (event) => {
+    res.write(`${JSON.stringify({
+      captureRunId,
+      timestamp: new Date().toISOString(),
+      ...event,
+    })}\n`);
+  };
+
+  try {
+    const finalResult = await executeLeadCapture(config, captureRunId, (progressEvent) => {
+      if (progressEvent.type === 'lead') {
+        send({ type: 'lead', ...progressEvent });
+      } else {
+        send({ type: 'progress', ...progressEvent });
+      }
+    });
+    send({ type: 'final', result: finalResult });
+  } catch (error) {
+    send({
+      type: 'final',
+      result: {
+        success: false,
+        captureRunId,
+        errorCode: 'INTERNAL_ERROR',
+        message: error.message || 'Erro interno na captura.',
+        qualified: [],
+        qualifiedCount: 0,
+        totalFound: 0,
+        totalScanned: 0,
+        rejectedCount: 0,
+        partial: false,
+        stats: { errors: [error.message] },
+      },
+    });
+  } finally {
+    res.end();
   }
 });
 

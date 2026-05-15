@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useApp } from '../context/AppContext';
 import { useI18n } from '../context/I18nContext';
@@ -13,9 +13,16 @@ import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Textarea from '../components/ui/Textarea';
 import EmptyState from '../components/ui/EmptyState';
-import { Search, Plus, Building2, User, Mail, Phone, DollarSign, Zap } from 'lucide-react';
-import CaptureModal from '../components/leads/CaptureModal';
+import Checkbox from '../components/ui/Checkbox';
+import { Search, Plus, Building2, User, Mail, Phone, DollarSign, Zap, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { createLeadInteraction } from '../services/leadCapture/leadConversionStrategy';
+import { triggerCapLeadDownload } from '../services/capleadDownload';
+import {
+  LEAD_PAGE_SIZE_OPTIONS,
+  getLeadPage,
+  getSelectableLeadIds,
+  reconcileSelectedLeadIds,
+} from './leadTableControls';
 
 const LEAD_STATUSES = ['new', 'qualified', 'discovery', 'proposal', 'won', 'lost'];
 
@@ -29,10 +36,13 @@ const Leads = () => {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [selectedLead, setSelectedLead] = useState(null);
   const [leadToDelete, setLeadToDelete] = useState(null);
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
   const [isEditingLead, setIsEditingLead] = useState(false);
   const [editLead, setEditLead] = useState(null);
   const [isNewLeadModalOpen, setIsNewLeadModalOpen] = useState(false);
-  const [isCaptureModalOpen, setIsCaptureModalOpen] = useState(false);
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedLeadIds, setSelectedLeadIds] = useState(() => new Set());
 
   // New lead form state
   const [newLead, setNewLead] = useState({
@@ -45,7 +55,7 @@ const Leads = () => {
     notes: ''
   });
 
-  const filteredLeads = leads.filter(lead => {
+  const filteredLeads = useMemo(() => leads.filter(lead => {
     const matchesStatus = statusFilter === 'all' || lead.status === statusFilter;
     const matchesSearch = (lead.company || '').toLowerCase().includes(search.toLowerCase()) || 
                          (lead.contact || '').toLowerCase().includes(search.toLowerCase());
@@ -56,7 +66,53 @@ const Leads = () => {
       lead.commercialOwnerUserId === user?.id ||
       user?.role === 'admin';
     return matchesStatus && matchesSearch && matchesSource && matchesOwner;
-  });
+  }), [leads, search, sourceFilter, statusFilter, user?.id, user?.role]);
+
+  const leadPage = useMemo(
+    () => getLeadPage(filteredLeads, currentPage, pageSize),
+    [filteredLeads, currentPage, pageSize]
+  );
+  const selectedVisibleLeadIds = useMemo(
+    () => reconcileSelectedLeadIds(selectedLeadIds, filteredLeads),
+    [selectedLeadIds, filteredLeads]
+  );
+  const pageLeadIds = useMemo(() => getSelectableLeadIds(leadPage.pageLeads), [leadPage.pageLeads]);
+  const selectedCount = selectedVisibleLeadIds.size;
+  const allPageLeadsSelected = pageLeadIds.length > 0 && pageLeadIds.every(id => selectedVisibleLeadIds.has(id));
+
+  const resetLeadTableState = () => {
+    setCurrentPage(1);
+    setSelectedLeadIds(new Set());
+  };
+
+  const handleStatusFilterChange = (status) => {
+    setStatusFilter(status);
+    resetLeadTableState();
+  };
+
+  const handleSearchChange = (event) => {
+    setSearch(event.target.value);
+    resetLeadTableState();
+  };
+
+  const handleSourceFilterChange = (source) => {
+    setSourceFilter(source);
+    resetLeadTableState();
+  };
+
+  const handlePageSizeChange = (size) => {
+    setPageSize(size);
+    resetLeadTableState();
+  };
+
+  const handleCapLeadDownload = () => {
+    const downloadUrl = triggerCapLeadDownload(window, import.meta.env);
+    addNotification(
+      'Download iniciado',
+      `Baixando a última versão funcional do CapLead: ${downloadUrl}`,
+      'info'
+    );
+  };
 
   const getStatusType = (status) => {
     switch (status) {
@@ -68,6 +124,14 @@ const Leads = () => {
       case 'lost': return 'danger';
       default: return 'secondary';
     }
+  };
+
+  const formatCurrency = (value) =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0));
+
+  const getSuggestedWebsiteValue = (lead) => {
+    const leadValue = Number(lead?.value || 0);
+    return leadValue > 0 ? leadValue : 15000;
   };
 
   const handleStatusChange = (lead, status) => {
@@ -121,11 +185,61 @@ const Leads = () => {
   const handleDeleteLead = () => {
     if (!leadToDelete) return;
     deleteLead(leadToDelete.id);
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      next.delete(leadToDelete.id);
+      return next;
+    });
     if (selectedLead?.id === leadToDelete.id) {
       setSelectedLead(null);
     }
     addNotification('Lead removido', `${leadToDelete.company} foi removido da gestão de leads.`, 'success');
     setLeadToDelete(null);
+  };
+
+  const toggleLeadSelection = (leadId) => {
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) {
+        next.delete(leadId);
+      } else {
+        next.add(leadId);
+      }
+      return next;
+    });
+  };
+
+  const togglePageSelection = () => {
+    setSelectedLeadIds(prev => {
+      const next = new Set(prev);
+      if (allPageLeadsSelected) {
+        pageLeadIds.forEach(id => next.delete(id));
+      } else {
+        pageLeadIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDeleteLeads = () => {
+    if (selectedVisibleLeadIds.size === 0) return;
+    const idsToDelete = [...selectedVisibleLeadIds];
+    const deletedCompanies = filteredLeads
+      .filter(lead => selectedVisibleLeadIds.has(lead.id))
+      .map(lead => lead.company);
+
+    idsToDelete.forEach(id => deleteLead(id));
+    if (selectedLead && selectedVisibleLeadIds.has(selectedLead.id)) {
+      setSelectedLead(null);
+    }
+
+    setSelectedLeadIds(new Set());
+    setIsBulkDeleteOpen(false);
+    addNotification(
+      'Leads removidos',
+      `${idsToDelete.length} registro${idsToDelete.length > 1 ? 's' : ''} removido${idsToDelete.length > 1 ? 's' : ''}: ${deletedCompanies.slice(0, 3).join(', ')}${deletedCompanies.length > 3 ? '...' : ''}`,
+      'success'
+    );
   };
 
   const openLeadDetails = (lead) => {
@@ -231,7 +345,7 @@ const Leads = () => {
           <div className="flex gap-md">
             <Button 
               variant="success" 
-              onClick={() => setIsCaptureModalOpen(true)}
+              onClick={handleCapLeadDownload}
               icon={Zap}
               className="bg-success hover:bg-[#0ea271] text-white border-none shadow-[0_4px_12px_rgba(16,185,129,0.25)]"
             >
@@ -249,7 +363,7 @@ const Leads = () => {
               <button 
                 key={st}
                 className={`tab ${statusFilter === st ? 'active' : ''}`} 
-                onClick={() => setStatusFilter(st)}
+                onClick={() => handleStatusFilterChange(st)}
               >
                 {st === 'all' ? t('leads.allLeads') : t(`status.${st}`)}
               </button>
@@ -260,13 +374,13 @@ const Leads = () => {
             <Input 
               placeholder={t('leads.searchPlaceholder')} 
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={handleSearchChange}
               icon={Search}
               wrapperClassName="w-80"
             />
             <Select 
               value={sourceFilter}
-              onChange={setSourceFilter}
+              onChange={handleSourceFilterChange}
               options={[
                 { value: 'all', label: t('common.allSources') },
                 { value: 'LinkedIn', label: t('leads.form.source.linkedin') },
@@ -281,10 +395,53 @@ const Leads = () => {
           </div>
         </div>
 
+        <div className="flex justify-between items-center mb-md gap-md flex-wrap">
+          <div className="flex items-center gap-md flex-wrap">
+            <Select
+              value={pageSize}
+              onChange={handlePageSizeChange}
+              options={LEAD_PAGE_SIZE_OPTIONS.map(size => ({
+                value: size,
+                label: `${size} por página`,
+              }))}
+              wrapperClassName="w-40"
+            />
+            <span className="text-xs text-muted font-bold">
+              {leadPage.startItem}-{leadPage.endItem} de {leadPage.totalItems} leads
+            </span>
+          </div>
+
+          <div className="flex items-center gap-sm flex-wrap">
+            {selectedCount > 0 && (
+              <>
+                <span className="text-xs text-muted font-bold">
+                  {selectedCount} selecionado{selectedCount > 1 ? 's' : ''}
+                </span>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  icon={Trash2}
+                  onClick={() => setIsBulkDeleteOpen(true)}
+                >
+                  Excluir selecionados
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
         <div className="table-wrapper">
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 48 }}>
+                  <Checkbox
+                    id="select-visible-leads"
+                    checked={allPageLeadsSelected}
+                    onChange={togglePageSelection}
+                    aria-label="Selecionar leads visíveis"
+                  />
+                </th>
                 <th>{t('leads.company')}</th>
                 <th>{t('leads.contact')}</th>
                 <th>{t('leads.value')}</th>
@@ -294,8 +451,16 @@ const Leads = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.map(lead => (
+              {leadPage.pageLeads.map(lead => (
                 <tr key={lead.id}>
+                  <td>
+                    <Checkbox
+                      id={`select-lead-${lead.id}`}
+                      checked={selectedLeadIds.has(lead.id)}
+                      onChange={() => toggleLeadSelection(lead.id)}
+                      aria-label={`Selecionar ${lead.company}`}
+                    />
+                  </td>
                   <td>
                     <div className="font-bold">{lead.company}</div>
                     <div className="text-xs text-muted">{lead.industry || 'Tecnologia'}</div>
@@ -350,7 +515,7 @@ const Leads = () => {
               ))}
               {filteredLeads.length === 0 && (
                 <tr>
-                  <td colSpan="6">
+                  <td colSpan="7">
                     <EmptyState 
                       title={t('leads.noLeads')}
                       description={t('leads.noLeadsDesc', 'Try adjusting your filters to find what you are looking for.')}
@@ -360,6 +525,38 @@ const Leads = () => {
               )}
             </tbody>
           </table>
+          {filteredLeads.length > 0 && (
+            <div className="capture-pagination">
+              <div className="capture-pagination-range">
+                Mostrando {leadPage.startItem}-{leadPage.endItem} de {leadPage.totalItems}
+              </div>
+              <div className="capture-pagination-controls">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="btn-icon"
+                  onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+                  disabled={leadPage.currentPage <= 1}
+                  aria-label="Página anterior"
+                >
+                  <ChevronLeft size={16} />
+                </Button>
+                <span className="capture-pagination-page">
+                  Página {leadPage.currentPage} de {leadPage.totalPages}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="btn-icon"
+                  onClick={() => setCurrentPage(page => Math.min(leadPage.totalPages, page + 1))}
+                  disabled={leadPage.currentPage >= leadPage.totalPages}
+                  aria-label="Próxima página"
+                >
+                  <ChevronRight size={16} />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -439,12 +636,6 @@ const Leads = () => {
         </div>
       </Modal>
       
-      {/* Capture Modal */}
-      <CaptureModal 
-        isOpen={isCaptureModalOpen} 
-        onClose={() => setIsCaptureModalOpen(false)} 
-      />
-
       {/* Details Modal */}
       <Modal
         isOpen={!!selectedLead}
@@ -551,6 +742,29 @@ const Leads = () => {
                 </div>
 
                 <div className="mb-lg">
+                  <label className="input-label">Site do lead</label>
+                  <div className="notes-box">
+                    {selectedLead.website ? (
+                      <a
+                        className="text-info font-bold hover:underline break-all"
+                        href={selectedLead.website}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {selectedLead.website.replace(/^https?:\/\//, '')}
+                      </a>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <strong>Oferecer criação e hospedagem</strong>
+                        <span className="text-sm text-secondary">
+                          Lead sem site identificado. Valor sugerido: {formatCurrency(getSuggestedWebsiteValue(selectedLead))}.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mb-lg">
                   <label className="input-label">{t('leads.scorePotential')}</label>
                   <div className="flex items-center gap-md">
                     <div className="progress-bar-container">
@@ -623,6 +837,22 @@ const Leads = () => {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={isBulkDeleteOpen}
+        onClose={() => setIsBulkDeleteOpen(false)}
+        title="Excluir leads selecionados"
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setIsBulkDeleteOpen(false)}>Cancelar</Button>
+            <Button variant="danger" onClick={handleBulkDeleteLeads}>Excluir {selectedCount} registro{selectedCount > 1 ? 's' : ''}</Button>
+          </>
+        }
+      >
+        <p className="text-sm text-secondary">
+          Tem certeza que deseja excluir {selectedCount} lead{selectedCount > 1 ? 's' : ''} selecionado{selectedCount > 1 ? 's' : ''}? Essa ação remove os registros da listagem e registra a remoção na auditoria.
+        </p>
       </Modal>
 
       <Modal
