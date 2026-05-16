@@ -48,6 +48,23 @@ function isTestLead(lead: Record<string, string | undefined>) {
   return false;
 }
 
+function parseLeadValue(lead: Record<string, unknown>) {
+  const raw =
+    lead.value ??
+    lead.estimatedValue ??
+    lead.valor_estimado ??
+    lead.budget ??
+    0;
+  if (raw === null || raw === undefined || raw === '') return 0;
+
+  const normalized = String(raw)
+    .replace(/[^\d,.-]/g, '')
+    .replace(/\./g, '')
+    .replace(',', '.');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+}
+
 function validateCapLeadData(lead: Record<string, string | undefined>) {
   const errors: string[] = [];
 
@@ -68,7 +85,7 @@ function validateCapLeadData(lead: Record<string, string | undefined>) {
 }
 
 function normalizeLeadData(
-  lead: Record<string, string | undefined>,
+  lead: Record<string, any>,
   {
     tenantId,
     userId,
@@ -81,6 +98,7 @@ function normalizeLeadData(
   const company = lead.nome || lead.name || lead.empresa || lead.titulo || 'Empresa';
   const sourceLabel =
     String(capturedBySource || lead.captureSource || userName || '').trim() || 'CapLead';
+  const estimatedValue = parseLeadValue(lead);
 
   return {
     tenant_id: tenantId,
@@ -93,7 +111,7 @@ function normalizeLeadData(
     status: 'new',
     score: 0,
     stage: 'new',
-    value: 0,
+    value: estimatedValue,
     industry: lead.categoria || lead.nicho || lead.category || '',
     notes: lead.descricao || lead.desc || lead.description || '',
     metadata: {
@@ -103,6 +121,9 @@ function normalizeLeadData(
       location: lead.localizacao || '',
       maps_url: lead.maps_url || '',
       capLeadSource: sourceLabel,
+      pricingModel: lead.pricingModel || (estimatedValue > 0 ? 'ai_development' : ''),
+      pricingBasis: lead.pricingBasis || '',
+      estimatedValue,
       importedAt: new Date().toISOString(),
       commercialOwnerEmail: userEmail || null,
       commercialOwnerName: sourceLabel,
@@ -297,3 +318,8 @@ export async function POST(req: Request) {
     );
   }
 }
+
+export const __testing = {
+  normalizeLeadData,
+  parseLeadValue,
+};
