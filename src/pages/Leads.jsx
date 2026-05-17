@@ -468,6 +468,9 @@ const Leads = () => {
                   <td>
                     <div>{lead.contact}</div>
                     <div className="text-xs text-muted">{lead.email}</div>
+                    {lead.whatsappSent && (
+                      <div className="text-xs text-success font-bold">WhatsApp enviado</div>
+                    )}
                   </td>
                   <td>
                     <div className="font-mono font-bold">

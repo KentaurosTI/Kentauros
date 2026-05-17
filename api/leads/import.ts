@@ -65,6 +65,26 @@ function parseLeadValue(lead: Record<string, unknown>) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
 }
 
+function parseBooleanFlag(value: unknown) {
+  if (value === true || value === 1) return true;
+  const text = String(value || '').trim().toLowerCase();
+  return ['1', 'true', 'sim', 'yes', 'sent', 'enviado'].includes(text);
+}
+
+function getWhatsappStatus(lead: Record<string, any>) {
+  const sent =
+    parseBooleanFlag(lead.wpp_enviado) ||
+    parseBooleanFlag(lead.whatsappSent) ||
+    String(lead.whatsappMessageStatus || '').toLowerCase() === 'sent';
+  const sentAt = lead.whatsappSentAt || lead.wpp_enviado_at || (sent ? new Date().toISOString() : null);
+
+  return {
+    sent,
+    sentAt,
+    messageStatus: sent ? 'sent' : 'pending',
+  };
+}
+
 function validateCapLeadData(lead: Record<string, string | undefined>) {
   const errors: string[] = [];
 
@@ -99,6 +119,7 @@ function normalizeLeadData(
   const sourceLabel =
     String(capturedBySource || lead.captureSource || userName || '').trim() || 'CapLead';
   const estimatedValue = parseLeadValue(lead);
+  const whatsappStatus = getWhatsappStatus(lead);
 
   return {
     tenant_id: tenantId,
@@ -124,6 +145,10 @@ function normalizeLeadData(
       pricingModel: lead.pricingModel || (estimatedValue > 0 ? 'ai_development' : ''),
       pricingBasis: lead.pricingBasis || '',
       estimatedValue,
+      whatsappSent: whatsappStatus.sent,
+      whatsappSentAt: whatsappStatus.sentAt,
+      whatsappMessageStatus: whatsappStatus.messageStatus,
+      capLeadLastSyncAt: new Date().toISOString(),
       importedAt: new Date().toISOString(),
       commercialOwnerEmail: userEmail || null,
       commercialOwnerName: sourceLabel,
@@ -140,29 +165,29 @@ function extractDomain(website: string) {
     .toLowerCase();
 }
 
-async function isDuplicate(tenantId: string, website: string, company: string) {
-  if (!supabase) return false;
+async function findDuplicateLead(tenantId: string, website: string, company: string) {
+  if (!supabase) return null;
 
   const domain = extractDomain(website);
   if (domain) {
     const { data: byWebsite } = await supabase
       .from('leads')
-      .select('id')
+      .select('id, metadata, value, status, stage')
       .eq('tenant_id', tenantId)
       .filter('metadata->>website', 'ilike', `%${domain}%`)
       .limit(1);
 
-    if (byWebsite?.length) return true;
+    if (byWebsite?.length) return byWebsite[0];
   }
 
   const { data: byCompany } = await supabase
     .from('leads')
-    .select('id')
+    .select('id, metadata, value, status, stage')
     .eq('tenant_id', tenantId)
     .ilike('company', company)
     .limit(1);
 
-  return Boolean(byCompany?.length);
+  return byCompany?.length ? byCompany[0] : null;
 }
 
 function authorizeImport(req: Request, body: { apiKey?: string }) {
@@ -222,6 +247,7 @@ export async function POST(req: Request) {
 
     const results = {
       imported: [] as unknown[],
+      updated: [] as unknown[],
       failed: [] as unknown[],
       duplicates: 0,
     };
@@ -245,11 +271,44 @@ export async function POST(req: Request) {
 
       const website = normalizedLead.metadata.website as string;
 
-      if (await isDuplicate(tenantId, website, normalizedLead.company)) {
-        results.duplicates++;
+      const duplicate = await findDuplicateLead(tenantId, website, normalizedLead.company);
+      if (duplicate) {
+        const shouldUpdateWhatsapp = normalizedLead.metadata.whatsappSent === true;
+        const shouldUpdateValue = Number(normalizedLead.value || 0) > Number(duplicate.value || 0);
+
+        if (supabase && (shouldUpdateWhatsapp || shouldUpdateValue)) {
+          const mergedMetadata = {
+            ...((duplicate.metadata as Record<string, unknown>) || {}),
+            ...normalizedLead.metadata,
+            importedAt: (duplicate.metadata as Record<string, unknown>)?.importedAt || normalizedLead.metadata.importedAt,
+            capLeadLastSyncAt: new Date().toISOString(),
+          };
+          const patch = {
+            metadata: mergedMetadata,
+            value: shouldUpdateValue ? normalizedLead.value : duplicate.value,
+            last_activity: new Date().toISOString(),
+          };
+          const { data: updatedLead, error: updateError } = await supabase
+            .from('leads')
+            .update(patch)
+            .eq('id', duplicate.id)
+            .select()
+            .single();
+
+          if (updateError) {
+            results.failed.push({
+              lead,
+              errors: [updateError.message],
+              reason: 'UPDATE_DUPLICATE_FAILED',
+            });
+          } else if (updatedLead) {
+            results.updated.push(updatedLead);
+          }
+        } else {
+          results.duplicates++;
+        }
         continue;
       }
-
       rowsToInsert.push(normalizedLead);
     }
 
@@ -293,6 +352,7 @@ export async function POST(req: Request) {
     const summary = {
       total: leads.length,
       imported: results.imported.length,
+      updated: results.updated.length,
       failed: results.failed.length,
       duplicates: results.duplicates,
     };
@@ -304,6 +364,7 @@ export async function POST(req: Request) {
       message: `Importação concluída: ${results.imported.length} leads importados`,
       summary,
       importedLeads: results.imported,
+      updatedLeads: results.updated.length > 0 ? results.updated : undefined,
       failedLeads: results.failed.length > 0 ? results.failed : undefined,
     });
   } catch (error) {
