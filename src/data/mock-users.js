@@ -2,6 +2,7 @@ export const mockUsers = [
   { id: 1, tenant_id: 'tenant-a', name: 'Admin Master', email: 'admin@kentauros.com', role: 'admin', tags: ['ADMIN', 'DEV', 'QA', 'UX'], avatar: 'AM', status: 'active', department: 'TI', since: '2022-01-01', accessCode: 'kentauros-admin' },
   { id: 13, tenant_id: 'tenant-a', name: 'Admin Kentauros', email: 'admin@kentauros.consulting', role: 'admin', tags: ['ADMIN', 'DEV', 'QA', 'UX', 'DEVOPS'], avatar: 'AK', status: 'active', department: 'Administração', since: '2026-05-08', accessCode: 'kentauros-admin' },
   { id: 14, tenant_id: 'tenant-a', name: 'Admin Operacional', email: 'operacional@kentauros.consulting', role: 'admin', tags: ['ADMIN', 'COMERCIAL', 'DEV', 'QA', 'UX'], avatar: 'AO', status: 'active', department: 'Operações', since: '2026-05-08', accessCode: 'kentauros-admin' },
+  { id: 15, tenant_id: 'tenant-a', name: 'Leadhunter Kentauros', email: 'leadhunter@kentauros.consulting', role: 'leadhunter', tags: ['LEADHUNTER'], avatar: 'LK', status: 'active', department: 'Comercial', since: '2026-05-18', accessCode: 'kentauros-leads' },
   { id: 2, tenant_id: 'tenant-b', name: 'Carlos Vendas', email: 'carlos@kentauros.com', role: 'comercial', tags: ['COMERCIAL'], avatar: 'CV', status: 'active', department: 'Comercial', since: '2022-03-15' },
   { id: 3, tenant_id: 'tenant-a', name: 'Ana Pré-Venda', email: 'ana@kentauros.com', role: 'prevendas', tags: ['COMERCIAL'], avatar: 'AP', status: 'active', department: 'Comercial', since: '2022-06-01' },
   { id: 4, tenant_id: 'tenant-b', name: 'Bruno BA', email: 'bruno@kentauros.com', role: 'ba', tags: ['ADMIN'], avatar: 'BB', status: 'active', department: 'Tecnologia', since: '2021-11-01' },
@@ -18,6 +19,7 @@ export const mockUsers = [
 export const ROLES = {
   admin: { label: 'Admin', color: 'purple' },
   comercial: { label: 'Comercial', color: 'blue' },
+  leadhunter: { label: 'Leadhunter', color: 'blue' },
   prevendas: { label: 'Pré-vendas', color: 'blue' },
   ba: { label: 'Business Analyst', color: 'green' },
   po: { label: 'Product Owner', color: 'green' },
@@ -33,6 +35,7 @@ export const ROLES = {
 export const PERMISSIONS = {
   admin:     { dashboard:true, leads:true, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:true, qa:true, deploy:true, support:true, clients:true, users:true, automations:true, settings:true },
   comercial: { dashboard:true, leads:true, discovery:false, proposals:true, projects:false, backlog:false, ux:false, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:true },
+  leadhunter:{ dashboard:false, leads:true, discovery:true, proposals:false, projects:false, backlog:false, ux:false, prototypes:true, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:false },
   prevendas: { dashboard:true, leads:true, discovery:true, proposals:true, projects:false, backlog:false, ux:false, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:true },
   ba:        { dashboard:true, leads:false, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:true },
   po:        { dashboard:true, leads:false, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:true, qa:true, deploy:false, support:false, clients:true, users:false, automations:true, settings:true },

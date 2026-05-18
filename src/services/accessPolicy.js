@@ -34,6 +34,11 @@ export const MODULE_OWNERSHIP = {
 
 export const hasModuleAccess = (user, module) => {
   if (!user) return false;
+  const rolePermissions = PERMISSIONS[user.role];
+  if (rolePermissions && Object.prototype.hasOwnProperty.call(rolePermissions, module)) {
+    return !!rolePermissions[module];
+  }
+
   if (module === 'dashboard') return true;
   if (module === 'discovery' || module === 'users' || module === 'settings' || module === 'productivity' || module === 'logs' || module === 'audit') {
     return canAccessAdmin(user);
@@ -44,7 +49,6 @@ export const hasModuleAccess = (user, module) => {
   if (module === 'qa') return canAccessQa(user);
   if (module === 'deploy' || module === 'automations') return canAccessDeploy(user);
 
-  const rolePermissions = PERMISSIONS[user.role];
   return rolePermissions ? !!rolePermissions[module] : false;
 };
 

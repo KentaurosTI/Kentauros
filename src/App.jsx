@@ -59,7 +59,7 @@ function App() {
         <Route path="/users" element={hasPermission('users') ? <Users /> : <Navigate to="/" />} />
         <Route path="/automations" element={hasPermission('automations') ? <Automations /> : <Navigate to="/" />} />
         <Route path="/settings" element={hasPermission('settings') ? <Settings /> : <Navigate to="/" />} />
-        <Route path="/prototypes" element={hasPermission('ux') ? <Prototypes /> : <Navigate to="/" />} />
+        <Route path="/prototypes" element={hasPermission('prototypes') ? <Prototypes /> : <Navigate to="/" />} />
         <Route path="/opencode" element={hasPermission('dev') || hasPermission('qa') ? <CodeGenerator /> : <Navigate to="/" />} />
         
         {/* CEO Agent */}
