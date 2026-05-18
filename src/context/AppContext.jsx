@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { mockUsers } from '../data/mock-users';
+import { findUserByCredentials } from '../services/loginPolicy';
 import { supabase } from '../services/supabaseClient';
 
 const AppContext = createContext();
@@ -50,16 +51,9 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const login = (credentials) => {
-    const email = (typeof credentials === 'string' ? credentials : credentials?.email || '').trim().toLowerCase();
-    const password = typeof credentials === 'string' ? '' : credentials?.password || '';
-    const foundUser = mockUsers.find(u => u.email.toLowerCase() === email);
+    const foundUser = findUserByCredentials(mockUsers, credentials);
 
     if (foundUser) {
-      if (foundUser.accessCode && foundUser.accessCode !== password) {
-        addNotification('Erro', 'Código de acesso inválido', 'error');
-        return false;
-      }
-
       setUser(foundUser);
       localStorage.setItem('kentauros_user', JSON.stringify(foundUser));
       syncUserProfile(foundUser);
