@@ -260,6 +260,7 @@ function normalizeLeadData(
     String(capturedBySource || lead.captureSource || userName || '').trim() || 'CapLead';
   const estimatedValue = parseLeadValue(lead);
   const whatsappStatus = getWhatsappStatus(lead);
+  const whatsapp = lead.whatsapp || lead.wpp || lead.whatsapp_number || lead.whatsappNumber || lead.contato_whatsapp || '';
   const quality = buildCapLeadQualityProfile(lead);
 
   return {
@@ -278,6 +279,7 @@ function normalizeLeadData(
     notes: lead.descricao || lead.desc || lead.description || '',
     metadata: {
       website,
+      whatsapp,
       city: lead.cidade || lead.city || '',
       state: lead.estado || lead.state || '',
       location: lead.localizacao || '',

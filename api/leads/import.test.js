@@ -53,6 +53,23 @@ test('normalizes confirmed WhatsApp sends from CapLead payloads', () => {
   assert.equal(row.metadata.whatsappMessageStatus, 'sent');
 });
 
+test('preserves WhatsApp contact in CapLead metadata for quality audit', () => {
+  const row = __testing.normalizeLeadData(
+    {
+      nome: 'Studio Conversao',
+      url: 'https://studioconversao.com.br',
+      whatsapp: '(11) 97777-1234',
+      dataQualityScore: 82,
+    },
+    {
+      tenantId: 'tenant-a',
+      userId: 1,
+    }
+  );
+
+  assert.equal(row.metadata.whatsapp, '(11) 97777-1234');
+});
+
 test('normalizes CapLead quality profile for scoring and governance', () => {
   const row = __testing.normalizeLeadData(
     {
