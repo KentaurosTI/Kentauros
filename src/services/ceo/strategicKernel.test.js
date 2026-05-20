@@ -1176,9 +1176,9 @@ test('keeps suggesting improvements from new MasterMind knowledge after legacy s
     }],
   });
 
-  assert.ok(suggestions.length >= 3);
+  assert.ok(suggestions.length >= 2);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_token_efficient_context_pipeline'), false);
-  assert.ok(suggestions.some(item => item.id === 'ceo_mastermind_raw_context_consolidation_alert'));
+  assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_raw_context_consolidation_alert'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_autonomous_approval_governance'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_ai_integration_reuse_map'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_ai_reuse_validation_kpi'), false);
@@ -1186,6 +1186,17 @@ test('keeps suggesting improvements from new MasterMind knowledge after legacy s
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_revenue_retention_kpi_board'), false);
   assert.ok(suggestions.some(item => item.id === 'ceo_mastermind_revenue_kpi_validation_cycle'));
   assert.ok(suggestions.every(item => item.actionPlan?.length));
+});
+
+test('marks raw context consolidation suggestion as implemented', () => {
+  assert.equal(isActiveCeoApproval({
+    status: 'approved',
+    appliedStatus: 'awaiting_codex',
+    metadata: {
+      source: 'ceo_strategic_kernel',
+      suggestionId: 'ceo_mastermind_raw_context_consolidation_alert',
+    },
+  }), false);
 });
 
 test('marks cross-project reuse suggestion as implemented after reusable pattern registration', () => {

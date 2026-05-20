@@ -107,6 +107,7 @@ const IMPLEMENTED_CEO_SUGGESTIONS = new Set([
   'ceo_mastermind_ai_integration_reuse_map',
   'ceo_mastermind_ai_reuse_validation_kpi',
   'ceo_mastermind_revenue_retention_kpi_board',
+  'ceo_mastermind_raw_context_consolidation_alert',
 ]);
 
 export const isImplementedCeoSuggestion = suggestionId =>

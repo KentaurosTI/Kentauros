@@ -4,6 +4,7 @@ import {
   ACTIVE_MASTERMIND_MEMORY,
   buildEconomicMastermindContext,
   buildMastermindKnowledge,
+  createRawEvidenceConsolidationHub,
 } from './mastermindContext.js';
 
 test('builds active CEO memory as MasterMind knowledge', () => {
@@ -69,4 +70,39 @@ test('keeps raw evidence out of primary suggestions until a hub is available', (
   assert.equal(context.summary.rawEvidence, 4);
   assert.ok(context.summary.alerts >= 1);
   assert.equal(context.primaryKnowledge.some(item => item.metadata.source === 'learning_event'), false);
+});
+
+test('consolidates only decision-changing raw evidence into a CEO hub', () => {
+  const context = buildEconomicMastermindContext({
+    learningEvents: [
+      {
+        title: 'Reuniao_Onboarding_1779213999636',
+        content: 'nota bruta repetida sem efeito executivo',
+        metadata: { source: 'raw_note' },
+      },
+      {
+        title: 'ApprovalRequest criado',
+        content: 'risco de aprovacao autonoma sem criterio de encerramento',
+        metadata: { source: 'raw_approval' },
+      },
+      {
+        title: 'Nota KPI Receita',
+        content: 'KPI receita baseline conversao lucro precisa entrar no painel CEO',
+        metadata: { source: 'raw_note' },
+      },
+    ],
+  });
+
+  const hub = createRawEvidenceConsolidationHub(context);
+
+  assert.equal(hub.source, 'ceo_mastermind_raw_context_consolidation_alert');
+  assert.equal(hub.summary.rawReviewed, 3);
+  assert.equal(hub.summary.consolidated, 2);
+  assert.equal(hub.summary.supportOnly, 1);
+  assert.ok(hub.hub.title.includes('Hub Evidencias Consolidadas'));
+  assert.ok(hub.hub.content.includes('ApprovalRequest criado'));
+  assert.ok(hub.hub.content.includes('Nota KPI Receita'));
+  assert.equal(hub.hub.content.includes('Reuniao_Onboarding_1779213999636'), false);
+  assert.equal(hub.learningEvent.metadata.suggestionId, 'ceo_mastermind_raw_context_consolidation_alert');
+  assert.equal(hub.futureSuggestionPolicy.primarySource, 'active_memory_and_hubs');
 });

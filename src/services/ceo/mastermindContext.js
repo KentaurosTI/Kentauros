@@ -205,3 +205,99 @@ export const buildEconomicMastermindContext = (input = {}) => {
     },
   };
 };
+
+const DECISION_CHANGING_KEYWORDS = [
+  'decisao',
+  'kpi',
+  'risco',
+  'padrao',
+  'approvalrequest',
+  'aprovacao',
+  'baseline',
+  'conversao',
+  'lucro',
+  'retencao',
+  'governanca',
+  'seguranca',
+  'automacao',
+];
+
+const isDecisionChangingEvidence = item => {
+  const text = compactText(item).toLowerCase();
+  return DECISION_CHANGING_KEYWORDS.some(keyword => text.includes(keyword));
+};
+
+const summarizeRawEvidence = item => ({
+  id: item.id,
+  title: item.title || 'Evidencia bruta sem titulo',
+  source: item.metadata?.source || 'raw_evidence',
+  consultationLayer: item.metadata?.consultationLayer || 'raw_evidence',
+  content: String(item.content || '').slice(0, 240),
+});
+
+export const createRawEvidenceConsolidationHub = (economicContext = {}) => {
+  const rawEvidence = economicContext.rawEvidence || [];
+  const consolidated = rawEvidence.filter(isDecisionChangingEvidence).map(summarizeRawEvidence);
+  const supportOnly = rawEvidence.filter(item => !isDecisionChangingEvidence(item)).map(summarizeRawEvidence);
+  const date = new Date().toISOString().slice(0, 10);
+  const hubTitle = `Hub Evidencias Consolidadas ${date}`;
+  const consolidatedLines = consolidated.length
+    ? consolidated.map(item => `- ${item.title}: ${item.content}`).join('\n')
+    : '- Sem evidencia bruta com impacto executivo novo.';
+
+  return {
+    source: 'ceo_mastermind_raw_context_consolidation_alert',
+    summary: {
+      rawReviewed: rawEvidence.length,
+      consolidated: consolidated.length,
+      supportOnly: supportOnly.length,
+      alerts: economicContext.alerts?.length || 0,
+    },
+    hub: {
+      id: `hub_evidencias_consolidadas_${date.replaceAll('-', '_')}`,
+      title: hubTitle,
+      content: [
+        `${hubTitle}`,
+        '',
+        'Objetivo: consolidar apenas evidencias brutas que mudam decisao, KPI, risco ou padrao do CEO.',
+        '',
+        '## Evidencias consolidadas',
+        consolidatedLines,
+        '',
+        '## Politica',
+        '- Memoria ativa e hubs continuam como entrada primaria da tela CEO.',
+        '- Notas brutas permanecem como evidencia de suporte ate mudarem decisao, KPI, risco ou padrao.',
+        '- ApprovalRequest sem consolidacao vira alerta, nao automacao direta.',
+      ].join('\n'),
+      tags: ['#ceo', '#mastermind', '#governanca', '#workflow', '#melhoria-continua'],
+      metadata: {
+        source: 'ceo_mastermind_raw_context_consolidation_alert',
+        rawReviewed: rawEvidence.length,
+        consolidated: consolidated.length,
+        supportOnly: supportOnly.length,
+      },
+    },
+    consolidated,
+    supportOnly,
+    futureSuggestionPolicy: {
+      primarySource: 'active_memory_and_hubs',
+      rawEvidenceGate: 'decision_kpi_risk_or_pattern_change_only',
+      automationGate: 'approval_request_with_closure_criteria',
+    },
+    learningEvent: {
+      source: 'mastermind_update',
+      event_type: 'ceo_suggestion_applied',
+      title: 'Sugestao CEO aplicada - Consolidar evidencias brutas que alimentam a tela CEO',
+      content: 'Evidencias brutas repetidas ou sem hub foram revisadas; somente sinais com impacto em decisao, KPI, risco ou padrao devem alimentar novas sugestoes CEO.',
+      signal_strength: 5,
+      tags: ['MasterMind', 'CEO', 'Governanca', 'Workflow', 'Aplicada'],
+      metadata: {
+        source: 'ceo_strategic_kernel',
+        suggestionId: 'ceo_mastermind_raw_context_consolidation_alert',
+        rawReviewed: rawEvidence.length,
+        consolidated: consolidated.length,
+        supportOnly: supportOnly.length,
+      },
+    },
+  };
+};
