@@ -1,0 +1,8 @@
+.claude
+.cursor
+.mcp.json
+supabase.exe
+node_modules
+dist
+logs
+*.log
