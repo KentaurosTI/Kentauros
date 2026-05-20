@@ -12,6 +12,7 @@ import {
   createCommercialImpactAudit,
   createCommercialGapExecutionBoard,
   createRevenueRetentionKpiBoard,
+  createRevenueRetentionKpiValidation,
   createAutonomousApprovalGovernanceReview,
   canExecuteSensitiveCeoAction,
   createCapLeadKentaurosSecurityAudit,
@@ -1176,7 +1177,7 @@ test('keeps suggesting improvements from new MasterMind knowledge after legacy s
     }],
   });
 
-  assert.ok(suggestions.length >= 2);
+  assert.ok(suggestions.length >= 1);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_token_efficient_context_pipeline'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_raw_context_consolidation_alert'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_autonomous_approval_governance'), false);
@@ -1184,7 +1185,7 @@ test('keeps suggesting improvements from new MasterMind knowledge after legacy s
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_ai_reuse_validation_kpi'), false);
   assert.ok(suggestions.some(item => item.id === 'ceo_mastermind_ai_reuse_standardization_playbook'));
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_revenue_retention_kpi_board'), false);
-  assert.ok(suggestions.some(item => item.id === 'ceo_mastermind_revenue_kpi_validation_cycle'));
+  assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_revenue_kpi_validation_cycle'), false);
   assert.ok(suggestions.every(item => item.actionPlan?.length));
 });
 
@@ -1443,6 +1444,60 @@ test('marks revenue retention KPI board suggestion as implemented', () => {
     metadata: {
       source: 'ceo_strategic_kernel',
       suggestionId: 'ceo_mastermind_revenue_retention_kpi_board',
+    },
+  }), false);
+});
+
+test('validates revenue retention and upsell KPIs before automation', () => {
+  const validation = createRevenueRetentionKpiValidation({
+    kpis: [
+      {
+        area: 'receita',
+        owner: 'CEO/Comercial',
+        baseline: 10000,
+        weeklyResult: 18000,
+        target: 15000,
+        dueInDays: 7,
+        successCriteria: 'Receita semanal acima da meta com proposta relacionada.',
+        profitImpact: 5,
+        retentionImpact: 2,
+      },
+      {
+        area: 'retencao',
+        owner: 'CS/Operacao',
+        baseline: 92,
+        weeklyResult: 96,
+        target: 95,
+        dueInDays: 14,
+        successCriteria: 'Clientes ativos com roadmap e risco de churn revisado.',
+        profitImpact: 3,
+        retentionImpact: 5,
+      },
+      {
+        area: 'upsell',
+        weeklyResult: 12,
+        target: 40,
+      },
+    ],
+  });
+
+  assert.equal(validation.summary.total, 3);
+  assert.equal(validation.summary.readyForApproval, 2);
+  assert.equal(validation.summary.blocked, 1);
+  assert.equal(validation.automationGate, 'BLOQUEADO_PARA_KPIS_SEM_BASELINE_DONO_PRAZO_OU_CRITERIO');
+  assert.equal(validation.priorityKpi.area, 'retencao');
+  assert.ok(validation.rows.find(row => row.area === 'upsell').blockers.includes('baseline_missing'));
+  assert.ok(validation.approvableAutomations.every(item => item.owner && item.successCriteria));
+  assert.equal(validation.learningEvent.metadata.source, 'ceo_mastermind_revenue_kpi_validation_cycle');
+});
+
+test('marks revenue KPI validation cycle suggestion as implemented', () => {
+  assert.equal(isActiveCeoApproval({
+    status: 'approved',
+    appliedStatus: 'awaiting_codex',
+    metadata: {
+      source: 'ceo_strategic_kernel',
+      suggestionId: 'ceo_mastermind_revenue_kpi_validation_cycle',
     },
   }), false);
 });

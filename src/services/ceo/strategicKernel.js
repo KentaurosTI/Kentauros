@@ -108,6 +108,7 @@ const IMPLEMENTED_CEO_SUGGESTIONS = new Set([
   'ceo_mastermind_ai_reuse_validation_kpi',
   'ceo_mastermind_revenue_retention_kpi_board',
   'ceo_mastermind_raw_context_consolidation_alert',
+  'ceo_mastermind_revenue_kpi_validation_cycle',
 ]);
 
 export const isImplementedCeoSuggestion = suggestionId =>
@@ -2106,6 +2107,120 @@ export const createRevenueRetentionKpiBoard = ({
         areas: rows.map(row => row.area),
         automationGate: 'BLOQUEADO_ATE_KPI_BASELINE_E_APPROVALREQUEST',
         connections: ['Motor_de_Lucro', 'Backlog_de_Melhorias'],
+      },
+    },
+  };
+};
+
+const normalizeKpiNumber = value => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const kpiBlockers = (kpi = {}) => {
+  const blockers = [];
+  if (normalizeKpiNumber(kpi.baseline ?? kpi.currentBaseline) === null) blockers.push('baseline_missing');
+  if (!String(kpi.owner || '').trim()) blockers.push('owner_missing');
+  if (!Number(kpi.dueInDays || kpi.reviewDueInDays || 0)) blockers.push('deadline_missing');
+  if (!String(kpi.successCriteria || '').trim()) blockers.push('success_criteria_missing');
+  if (normalizeKpiNumber(kpi.weeklyResult ?? kpi.currentResult) === null) blockers.push('weekly_result_missing');
+  return blockers;
+};
+
+const calculateKpiDelta = (baseline, weeklyResult) => {
+  if (baseline === null || weeklyResult === null) return null;
+  return weeklyResult - baseline;
+};
+
+const normalizeValidationKpi = (input = {}) => {
+  const area = normalizeKpiArea(input.area || input.category || input.name);
+  const defaults = REVENUE_RETENTION_KPI_DEFAULTS[area] || {};
+  const baseline = normalizeKpiNumber(input.baseline ?? input.currentBaseline);
+  const weeklyResult = normalizeKpiNumber(input.weeklyResult ?? input.currentResult);
+  const target = normalizeKpiNumber(input.targetValue ?? input.target);
+  const blockers = kpiBlockers({ ...defaults, ...input });
+  const delta = calculateKpiDelta(baseline, weeklyResult);
+  const targetMet = target === null || weeklyResult === null ? false : weeklyResult >= target;
+  const impactScore = Number(input.profitImpact || 0) + Number(input.retentionImpact || 0) + Number(input.conversionImpact || 0);
+
+  return {
+    id: `kpi_validation_${area || 'unknown'}`,
+    area,
+    owner: input.owner || defaults.owner || 'CEO',
+    metric: input.metric || defaults.metric || 'KPI CEO',
+    baseline,
+    weeklyResult,
+    target,
+    delta,
+    targetMet,
+    dueInDays: Number(input.dueInDays || defaults.dueInDays || 7),
+    successCriteria: input.successCriteria || defaults.successCriteria || '',
+    status: blockers.length ? 'blocked' : targetMet ? 'validated' : 'monitoring',
+    blockers,
+    impactScore,
+    automationApprovalStatus: blockers.length ? 'blocked' : 'ready_for_approval_request',
+  };
+};
+
+export const createRevenueRetentionKpiValidation = ({
+  kpis = [],
+  generatedAt = '2026-05-20',
+} = {}) => {
+  const rows = (kpis.length ? kpis : createRevenueRetentionKpiBoard().kpis).map(normalizeValidationKpi);
+  const approvableAutomations = rows
+    .filter(row => row.automationApprovalStatus === 'ready_for_approval_request')
+    .map(row => ({
+      id: `automation_candidate_${row.area}`,
+      area: row.area,
+      owner: row.owner,
+      metric: row.metric,
+      baseline: row.baseline,
+      weeklyResult: row.weeklyResult,
+      delta: row.delta,
+      successCriteria: row.successCriteria,
+      approvalRequired: true,
+      closureCriteria: `Automacao so pode iniciar se ${row.metric} mantiver medicao semanal e criterio: ${row.successCriteria}`,
+    }));
+  const priorityKpi = rows
+    .filter(row => row.automationApprovalStatus === 'ready_for_approval_request')
+    .sort((a, b) => b.impactScore - a.impactScore || Math.abs(b.delta || 0) - Math.abs(a.delta || 0))[0] || null;
+
+  return {
+    generatedAt,
+    rows,
+    priorityKpi,
+    approvableAutomations,
+    automationGate: 'BLOQUEADO_PARA_KPIS_SEM_BASELINE_DONO_PRAZO_OU_CRITERIO',
+    summary: {
+      total: rows.length,
+      readyForApproval: approvableAutomations.length,
+      blocked: rows.filter(row => row.status === 'blocked').length,
+      monitoring: rows.filter(row => row.status === 'monitoring').length,
+      validated: rows.filter(row => row.status === 'validated').length,
+      priorityArea: priorityKpi?.area || null,
+    },
+    decisionRule: 'Automacoes de marketing, onboarding, upsell ou contrato via IA so podem seguir quando KPI tiver baseline, dono, prazo, resultado semanal e criterio de encerramento.',
+    impactAnalysis: {
+      technical: 'Baixo: valida regra executiva sem criar automacao externa.',
+      operation: 'Medio: exige dono, prazo e resultado semanal antes de acao.',
+      conversion: 'Alto: prioriza KPIs com impacto comercial mensuravel.',
+      profit: 'Alto: identifica maior impacto em lucro antes de automatizar.',
+      retention: 'Alto: protege retencao e onboarding contra automacao prematura.',
+    },
+    learningEvent: {
+      source: 'mastermind_update',
+      event_type: 'revenue_retention_kpi_validation',
+      title: 'Validacao de KPIs de receita, retencao e upsell antes de automatizar',
+      content: `${rows.length} KPI(s) revisados; ${approvableAutomations.length} automacao(oes) podem virar ApprovalRequest e ${rows.filter(row => row.status === 'blocked').length} permanecem bloqueadas por falta de baseline, dono, prazo, resultado ou criterio.`,
+      signal_strength: 5,
+      tags: ['MasterMind', 'CEO', 'Comercial', 'KPI', 'Lucro', 'Retencao'],
+      metadata: {
+        source: 'ceo_mastermind_revenue_kpi_validation_cycle',
+        suggestionId: 'ceo_mastermind_revenue_kpi_validation_cycle',
+        automationGate: 'BLOQUEADO_PARA_KPIS_SEM_BASELINE_DONO_PRAZO_OU_CRITERIO',
+        readyForApproval: approvableAutomations.length,
+        blocked: rows.filter(row => row.status === 'blocked').length,
+        priorityArea: priorityKpi?.area || null,
       },
     },
   };
