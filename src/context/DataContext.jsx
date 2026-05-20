@@ -350,6 +350,7 @@ export const DataProvider = ({ children }) => {
   const [learningEvents, setLearningEvents] = useState([]);
   const [approvalRequests, setApprovalRequests] = useState([]);
   const [workflowRuns, setWorkflowRuns] = useState([]);
+  const [prototypes, setPrototypes] = useState([]);
   const [captureJobs, setCaptureJobs] = useState([]);
   const [captureResults, setCaptureResults] = useState([]);
 
@@ -425,6 +426,7 @@ export const DataProvider = ({ children }) => {
       loadOperational('Automation', setAutomations, mockAutomations);
       loadOperational('ApprovalRequest', setApprovalRequests, []);
       loadOperational('WorkflowRun', setWorkflowRuns, []);
+      loadOperational('Prototype', setPrototypes, []);
       const localLearningEvents = readLocalEntity('LearningEvent', tenantId);
       loadLearningEvents(tenantId)
         .then(events => {
@@ -454,6 +456,7 @@ export const DataProvider = ({ children }) => {
       setLearningEvents([]);
       setApprovalRequests([]);
       setWorkflowRuns([]);
+      setPrototypes([]);
     }
     return () => {
       cancelled = true;
@@ -724,6 +727,7 @@ export const DataProvider = ({ children }) => {
       learningEvents, setLearningEvents, addLearningEvent,
       approvalRequests, setApprovalRequests, updateApprovalRequest: updateEntity(setApprovalRequests, 'ApprovalRequest'), addApprovalRequest: addEntity(setApprovalRequests, 'ApprovalRequest'),
       workflowRuns, setWorkflowRuns, updateWorkflowRun: updateEntity(setWorkflowRuns, 'WorkflowRun'), addWorkflowRun: addEntity(setWorkflowRuns, 'WorkflowRun'),
+      prototypes, setPrototypes, updatePrototype: updateEntity(setPrototypes, 'Prototype'), addPrototype: addEntity(setPrototypes, 'Prototype'), deletePrototype: deleteEntity(setPrototypes, 'Prototype'),
       captureJobs, setCaptureJobs, 
       captureResults, setCaptureResults,
       startCaptureJob: (config) => {

@@ -25,7 +25,7 @@ const getMenuItems = (t) => [
   { path: '/productivity', label: t('nav.productivity') || 'Produtividade', icon: 'M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z', module: 'productivity' },
   { path: '/smart-logs', label: t('nav.logs') || 'Smart Logs', icon: 'M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z', module: 'logs' },
   { path: '/audit', label: t('nav.audit') || 'Auditoria', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z', module: 'audit' },
-  { path: '/ceo', label: 'CEO Agent', icon: 'M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z', module: 'admin' },
+  { path: '/ceo', label: 'MasterMind CEO', icon: 'M12 2a5 5 0 00-5 5v1H6a4 4 0 000 8h1v1a5 5 0 005 5 5 5 0 005-5v-1h1a4 4 0 000-8h-1V7a5 5 0 00-5-5zm-3 7V7a3 3 0 116 0v10a3 3 0 11-6 0v-2H6a2 2 0 110-4h3V9zm6 2h3a2 2 0 110 4h-3v-4z', module: 'ceo' },
   { path: '/analytics', label: 'Analytics', icon: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z', module: 'admin' },
 ];
 

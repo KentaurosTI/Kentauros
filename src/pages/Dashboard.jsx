@@ -11,10 +11,16 @@ import Badge from '../components/ui/Badge';
 import Chart from '../components/ui/Chart';
 import Button from '../components/ui/Button';
 import { getDashboardMetrics, getScopedDashboardData } from '../services/operationalWorkflow';
+import {
+  createDecisionRecommendations,
+  createOperationalConversionCycle,
+  createWeeklyCeoReview,
+  getMastermindLearningEvents,
+} from '../services/continuousImprovement';
 
 const Dashboard = () => {
   const { t } = useI18n();
-  const { leads, projects, backlog, automations, proposals, qaTests, deployments } = useData();
+  const { leads, discoveries, clients, projects, backlog, automations, proposals, qaTests, deployments, addBacklog, addLearningEvent } = useData();
   const { user, addNotification } = useApp();
   const { incidents } = useLogs();
   const navigate = useNavigate();
@@ -22,12 +28,20 @@ const Dashboard = () => {
   const [isExecutiveView, setIsExecutiveView] = useState(false);
 
   const scopedData = useMemo(
-    () => getScopedDashboardData({ user, leads, projects, backlog, proposals, qaTests, deployments, automations }),
-    [user, leads, projects, backlog, proposals, qaTests, deployments, automations]
+    () => getScopedDashboardData({ user, leads, discoveries, clients, projects, backlog, proposals, qaTests, deployments, automations }),
+    [user, leads, discoveries, clients, projects, backlog, proposals, qaTests, deployments, automations]
   );
 
   const metrics = useMemo(
     () => getDashboardMetrics(scopedData),
+    [scopedData]
+  );
+  const decisionRecommendations = useMemo(
+    () => createDecisionRecommendations(scopedData),
+    [scopedData]
+  );
+  const weeklyReview = useMemo(
+    () => createWeeklyCeoReview(scopedData),
     [scopedData]
   );
 
@@ -44,6 +58,32 @@ const Dashboard = () => {
       setIsRefreshing(false);
       addNotification('Dashboard atualizado', 'Indicadores sincronizados com o estado atual.', 'success');
     }, 800);
+  };
+
+  const syncMastermindLearnings = () => {
+    const events = getMastermindLearningEvents(scopedData);
+    events.forEach(event => addLearningEvent(event));
+    addNotification('MasterMind atualizado', `${events.length} aprendizado${events.length === 1 ? '' : 's'} sincronizado${events.length === 1 ? '' : 's'}.`, 'success');
+  };
+
+  const createCommercialBacklog = () => {
+    const cycle = createOperationalConversionCycle({
+      ...scopedData,
+      recommendations: decisionRecommendations,
+      existingBacklog: backlog,
+      ownerId: user?.id,
+    });
+    const tasks = cycle.backlog;
+
+    tasks.forEach(task => addBacklog(task));
+    addLearningEvent(cycle.learningEvent);
+    addNotification(
+      'Backlog comercial atualizado',
+      tasks.length
+        ? `${tasks.length} tarefa${tasks.length === 1 ? '' : 's'} criada${tasks.length === 1 ? '' : 's'} a partir do MasterMind.`
+        : 'As recomendações comerciais já estavam priorizadas no backlog.',
+      tasks.length ? 'success' : 'info'
+    );
   };
 
   return (
@@ -110,6 +150,10 @@ const Dashboard = () => {
           <StatCard label="Prontidão média" value={`${metrics.avgReadiness}%`} change="score comercial" />
           <StatCard label="Taxa de ganho" value={`${metrics.conversionRate}%`} change={`${metrics.wonLeads} ganhos`} trend="up" />
           <StatCard label="Follow-ups" value={scopedData.leads.filter(lead => lead.followUpStatus === 'scheduled').length} change="agendados" />
+          <StatCard label="Lead para proposta" value={`${metrics.leadToProposalRate}%`} change={`${metrics.proposalCount} propostas`} trend="up" />
+          <StatCard label="Proposta para cliente" value={`${metrics.proposalToClientRate}%`} change={`${metrics.clientCount} clientes`} trend="up" />
+          <StatCard label="Ticket medio" value={new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(metrics.averageTicket)} change="propostas" />
+          <StatCard label="Discoveries" value={metrics.discoveryCount} change="em base comercial" />
         </div>
       )}
 
@@ -119,6 +163,42 @@ const Dashboard = () => {
         </Card>
         <Card title={t('dashboard.charts.pipeline')}>
           <Chart type="bar" data={metrics.pipeline} height={280} colors={['#D4AF37', '#10B981', '#F59E0B']} />
+        </Card>
+      </div>
+
+      <div className="grid grid-2 mb-8">
+        <Card
+          title="Decisões recomendadas pelo MasterMind"
+          footer={<Button variant="primary" className="w-full" onClick={createCommercialBacklog}>Gerar backlog comercial</Button>}
+        >
+          <div className="flex flex-col gap-sm">
+            {decisionRecommendations.slice(0, 4).map(recommendation => (
+              <div key={recommendation.id} className="p-md bg-secondary border-radius-sm">
+                <div className="flex justify-between gap-sm">
+                  <strong>{recommendation.title}</strong>
+                  <Badge variant={recommendation.score.priority === 'critica' ? 'danger' : 'warning'}>
+                    {recommendation.score.total}
+                  </Badge>
+                </div>
+                <p className="text-sm text-muted mt-xs">{recommendation.origin}</p>
+                <div className="text-xs text-muted mt-xs">Impacto: {recommendation.impact.expected}</div>
+              </div>
+            ))}
+            {decisionRecommendations.length === 0 && <span className="text-sm text-muted">Nenhuma decisão crítica no momento.</span>}
+          </div>
+        </Card>
+        <Card title="Revisão semanal CEO" footer={<Button variant="secondary" className="w-full" onClick={syncMastermindLearnings}>Sincronizar aprendizados</Button>}>
+          <div className="grid grid-2 gap-sm mb-md">
+            <div className="p-sm bg-secondary border-radius-sm">Leads: <strong>{weeklyReview.indicators.leads}</strong></div>
+            <div className="p-sm bg-secondary border-radius-sm">Propostas: <strong>{weeklyReview.indicators.proposals}</strong></div>
+            <div className="p-sm bg-secondary border-radius-sm">Clientes: <strong>{weeklyReview.indicators.clients}</strong></div>
+            <div className="p-sm bg-secondary border-radius-sm">Projetos abertos: <strong>{weeklyReview.indicators.openProjects}</strong></div>
+          </div>
+          <div className="flex flex-col gap-xs">
+            {weeklyReview.nextDecisions.slice(0, 3).map(item => (
+              <Badge key={item.id} variant="secondary">{item.title}</Badge>
+            ))}
+          </div>
         </Card>
       </div>
 

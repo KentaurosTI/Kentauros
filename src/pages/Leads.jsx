@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useData } from '../context/DataContext';
 import { useApp } from '../context/AppContext';
 import { useI18n } from '../context/I18nContext';
@@ -14,9 +15,12 @@ import Select from '../components/ui/Select';
 import Textarea from '../components/ui/Textarea';
 import EmptyState from '../components/ui/EmptyState';
 import Checkbox from '../components/ui/Checkbox';
+import OpportunityScore from '../components/leads/OpportunityScore';
 import { Search, Plus, Building2, User, Mail, Phone, DollarSign, Zap, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { createLeadInteraction } from '../services/leadCapture/leadConversionStrategy';
 import { triggerCapLeadDownload } from '../services/capleadDownload';
+import { buildOpportunityTimeline, canTransitionLeadStatus } from '../services/commercialFlow';
+import { getLeadCoolingAlerts } from '../services/continuousImprovement';
 import {
   LEAD_PAGE_SIZE_OPTIONS,
   getLeadPage,
@@ -28,8 +32,9 @@ const LEAD_STATUSES = ['new', 'qualified', 'discovery', 'proposal', 'won', 'lost
 
 const Leads = () => {
   const { t } = useI18n();
-  const { leads, addLead, updateLead, deleteLead, discoveries, updateDiscovery } = useData();
+  const { leads, addLead, updateLead, deleteLead, discoveries, proposals = [], projects = [], clients = [], prototypes = [], updateDiscovery } = useData();
   const { user, addNotification } = useApp();
+  const navigate = useNavigate();
   const { promoteLeadToDiscovery } = useWorkflow();
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -43,6 +48,7 @@ const Leads = () => {
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedLeadIds, setSelectedLeadIds] = useState(() => new Set());
+  const [viewMode, setViewMode] = useState('table');
 
   // New lead form state
   const [newLead, setNewLead] = useState({
@@ -77,6 +83,8 @@ const Leads = () => {
     [selectedLeadIds, filteredLeads]
   );
   const pageLeadIds = useMemo(() => getSelectableLeadIds(leadPage.pageLeads), [leadPage.pageLeads]);
+  const coolingAlerts = useMemo(() => getLeadCoolingAlerts(filteredLeads), [filteredLeads]);
+  const coolingLeadIds = useMemo(() => new Set(coolingAlerts.map(alert => String(alert.leadId))), [coolingAlerts]);
   const selectedCount = selectedVisibleLeadIds.size;
   const allPageLeadsSelected = pageLeadIds.length > 0 && pageLeadIds.every(id => selectedVisibleLeadIds.has(id));
 
@@ -135,6 +143,11 @@ const Leads = () => {
   };
 
   const handleStatusChange = (lead, status) => {
+    const transition = canTransitionLeadStatus(lead.status, status);
+    if (!transition.allowed) {
+      addNotification('Transicao bloqueada', transition.reason || 'Status invalido para este lead.', 'error');
+      return;
+    }
     updateLead(lead.id, {
       status,
       lastActivity: new Date().toISOString().split('T')[0],
@@ -248,6 +261,15 @@ const Leads = () => {
     setEditLead(null);
   };
 
+  const openLeadOpportunity = (lead) => {
+    navigate(`/leads/${lead.id}`);
+  };
+
+  const kanbanColumns = useMemo(() => LEAD_STATUSES.map(status => ({
+    status,
+    leads: filteredLeads.filter(lead => (lead.status || 'new') === status),
+  })), [filteredLeads]);
+
   const startEditLead = () => {
     setEditLead({
       company: selectedLead.company || '',
@@ -293,47 +315,6 @@ const Leads = () => {
     setIsEditingLead(false);
     setEditLead(null);
     addNotification('Lead atualizado', `${updated.company} foi atualizado com sucesso.`, 'success');
-  };
-
-  const getHistory = (lead) => {
-    const history = [
-      { title: t('leads.history.created.title', 'Lead Created'), timestamp: lead.createdAt, status: 'success', description: t('leads.history.created.desc', `Lead acquired via ${lead.source}.`, { source: lead.source }) }
-    ];
-
-    if (lead.status !== 'new') {
-      const qualifiedDate = new Date(lead.createdAt);
-      qualifiedDate.setDate(qualifiedDate.getDate() + 3);
-      history.push({ 
-        title: t('leads.history.qualified.title', 'Lead Qualified'), 
-        timestamp: qualifiedDate.toISOString().split('T')[0], 
-        status: 'success', 
-        description: t('leads.history.qualified.desc', 'Lead score reached target threshold.') 
-      });
-    }
-
-    if (['discovery', 'proposal', 'won'].includes(lead.status)) {
-      const discoveryDate = new Date(lead.createdAt);
-      discoveryDate.setDate(discoveryDate.getDate() + 7);
-      history.push({ 
-        title: t('leads.history.discovery.title', 'Moved to Discovery'), 
-        timestamp: discoveryDate.toISOString().split('T')[0], 
-        status: 'success', 
-        description: t('leads.history.discovery.desc', 'Discovery phase initiated with Analyst.') 
-      });
-    }
-
-    if (['proposal', 'won'].includes(lead.status)) {
-      const proposalDate = new Date(lead.createdAt);
-      proposalDate.setDate(proposalDate.getDate() + 12);
-      history.push({ 
-        title: t('leads.history.proposal.title', 'Proposal Generated'), 
-        timestamp: proposalDate.toISOString().split('T')[0], 
-        status: 'success', 
-        description: t('leads.history.proposal.desc', 'Commercial proposal sent to client.') 
-      });
-    }
-
-    return history.reverse();
   };
 
   return (
@@ -412,6 +393,20 @@ const Leads = () => {
           </div>
 
           <div className="flex items-center gap-sm flex-wrap">
+            <Button
+              variant={viewMode === 'table' ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setViewMode('table')}
+            >
+              Tabela
+            </Button>
+            <Button
+              variant={viewMode === 'kanban' ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => setViewMode('kanban')}
+            >
+              Kanban comercial
+            </Button>
             {selectedCount > 0 && (
               <>
                 <span className="text-xs text-muted font-bold">
@@ -430,8 +425,37 @@ const Leads = () => {
           </div>
         </div>
 
-        <div className="table-wrapper">
-          <table className="table">
+        {viewMode === 'kanban' ? (
+          <div className="grid grid-3 gap-md">
+            {kanbanColumns.map(column => (
+              <Card key={column.status} title={t(`status.${column.status}`)} headerActions={<Badge variant={getStatusType(column.status)}>{column.leads.length}</Badge>}>
+                <div className="flex flex-col gap-sm">
+                  {column.leads.map(lead => (
+                    <div key={lead.id} className="p-md bg-secondary border-radius-sm border-subtle">
+                      <div className="flex justify-between gap-sm items-start">
+                        <div>
+                          <strong>{lead.company}</strong>
+                          <div className="text-xs text-muted">{formatCurrency(lead.value)} · {lead.source}</div>
+                        </div>
+                        <OpportunityScore lead={lead} compact />
+                      </div>
+                      <div className="text-xs text-muted mt-sm">
+                        {lead.nextAction || (coolingLeadIds.has(String(lead.id)) ? 'Follow-up recomendado' : 'Validar diagnóstico')}
+                      </div>
+                      <div className="flex gap-xs mt-sm">
+                        <Button variant="secondary" size="sm" onClick={() => openLeadOpportunity(lead)}>Oportunidade</Button>
+                        <Button variant="primary" size="sm" onClick={() => openLeadDetails(lead)}>Resumo</Button>
+                      </div>
+                    </div>
+                  ))}
+                  {column.leads.length === 0 && <span className="text-xs text-muted">Sem leads nesta etapa.</span>}
+                </div>
+              </Card>
+            ))}
+          </div>
+        ) : (
+        <div className="table-wrapper leads-table-wrapper">
+          <table className="table leads-table">
             <thead>
               <tr>
                 <th style={{ width: 48 }}>
@@ -445,9 +469,11 @@ const Leads = () => {
                 <th>{t('leads.company')}</th>
                 <th>{t('leads.contact')}</th>
                 <th>{t('leads.value')}</th>
+                <th>Score</th>
+                <th>Próxima ação</th>
                 <th>{t('common.status')}</th>
                 <th>{t('leads.source')}</th>
-                <th>{t('common.actions')}</th>
+                <th className="leads-actions-column">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -483,6 +509,13 @@ const Leads = () => {
                     )}
                   </td>
                   <td>
+                    <OpportunityScore lead={lead} compact />
+                  </td>
+                  <td className="text-sm">
+                    {lead.nextAction || (coolingLeadIds.has(String(lead.id)) ? 'Follow-up recomendado' : 'Validar diagnóstico')}
+                    {coolingLeadIds.has(String(lead.id)) && <div className="text-xs text-danger font-bold">Risco de esfriar</div>}
+                  </td>
+                  <td>
                     <div className="flex items-center gap-2">
                       <Badge variant={getStatusType(lead.status)}>
                         {t(`status.${lead.status}`)}
@@ -499,9 +532,10 @@ const Leads = () => {
                     </div>
                   </td>
                   <td className="text-sm">{lead.source}</td>
-                  <td>
-                    <div className="flex gap-sm">
+                  <td className="leads-actions-column">
+                    <div className="leads-row-actions">
                       <Button variant="secondary" size="sm" onClick={() => openLeadDetails(lead)}>{t('common.details')}</Button>
+                      <Button variant="secondary" size="sm" onClick={() => openLeadOpportunity(lead)}>Oportunidade</Button>
                       {lead.status === 'new' && (
                         <Button 
                           variant="primary" 
@@ -518,7 +552,7 @@ const Leads = () => {
               ))}
               {filteredLeads.length === 0 && (
                 <tr>
-                  <td colSpan="7">
+                  <td colSpan="9">
                     <EmptyState 
                       title={t('leads.noLeads')}
                       description={t('leads.noLeadsDesc', 'Try adjusting your filters to find what you are looking for.')}
@@ -561,6 +595,7 @@ const Leads = () => {
             </div>
           )}
         </div>
+        )}
       </Card>
 
       {/* New Lead Modal */}
@@ -821,7 +856,22 @@ const Leads = () => {
               <div>
                 <label className="input-label">{t('leads.activityHistory')}</label>
                 <div className="timeline-container-scrollable">
-                  <Timeline items={getHistory(selectedLead)} />
+                  <Timeline
+                    items={buildOpportunityTimeline({
+                      lead: selectedLead,
+                      discoveries,
+                      proposals,
+                      projects,
+                      clients,
+                      prototypes,
+                      interactions: selectedLead.interactionHistory || [],
+                    }).map(item => ({
+                      title: item.title,
+                      timestamp: item.date,
+                      status: item.status,
+                      description: item.entity,
+                    }))}
+                  />
                 </div>
                 {(selectedLead.interactionHistory || []).length > 0 && (
                   <div className="mt-lg">

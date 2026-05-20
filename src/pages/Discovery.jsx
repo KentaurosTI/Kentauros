@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useApp } from '../context/AppContext';
+import { usePermissions } from '../hooks/usePermissions';
 import PageHeader from '../components/ui/PageHeader';
 import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
@@ -10,7 +11,8 @@ import Modal from '../components/ui/Modal';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Textarea from '../components/ui/Textarea';
-import { deriveDiscoveryKnowledge, canAccessAdmin } from '../services/operationalWorkflow';
+import { deriveDiscoveryKnowledge } from '../services/operationalWorkflow';
+import { isDiscoveryReadyForProposal } from '../services/commercialFlow';
 import { BookOpen, FileText, Mic, Plus, Trash2, Upload } from 'lucide-react';
 
 const emptyMeetingForm = {
@@ -19,6 +21,9 @@ const emptyMeetingForm = {
   status: 'in_progress',
   meetingStatus: 'reuniao_confirmada',
   summary: '',
+  opportunity: '',
+  scope: '',
+  nextAction: '',
   transcription: '',
   diagramming: '',
   decisionsText: '',
@@ -39,7 +44,8 @@ const formatMeetingStatus = (value) => meetingStatusLabels[value] || String(valu
 
 const Discovery = () => {
   const { discoveries = [], addDiscovery, updateDiscovery, deleteDiscovery, updateLead, addLearningEvent } = useData();
-  const { user, addNotification } = useApp();
+  const { addNotification } = useApp();
+  const { hasPermission } = usePermissions();
   const knowledge = useMemo(() => deriveDiscoveryKnowledge(discoveries), [discoveries]);
   const [selectedDiscovery, setSelectedDiscovery] = useState(null);
   const [discoveryToDelete, setDiscoveryToDelete] = useState(null);
@@ -53,6 +59,9 @@ const Discovery = () => {
       status: discovery.status || 'in_progress',
       meetingStatus: discovery.meetingStatus || 'reuniao_confirmada',
       summary: discovery.summary || '',
+      opportunity: discovery.opportunity || '',
+      scope: discovery.scope || '',
+      nextAction: discovery.nextAction || '',
       transcription: discovery.transcription || '',
       diagramming: discovery.diagramming || '',
       decisionsText: arrayToLines(discovery.decisions),
@@ -148,6 +157,9 @@ const Discovery = () => {
       status: meetingForm.status,
       meetingStatus: meetingForm.meetingStatus,
       summary: meetingForm.summary,
+      opportunity: meetingForm.opportunity,
+      scope: meetingForm.scope,
+      nextAction: meetingForm.nextAction,
       transcription: meetingForm.transcription,
       transcriptFile: meetingForm.transcriptFile,
       diagramming: meetingForm.diagramming,
@@ -207,7 +219,7 @@ const Discovery = () => {
     setDiscoveryToDelete(null);
   };
 
-  if (!canAccessAdmin(user)) {
+  if (!hasPermission('discovery')) {
     return (
       <div className="discovery-page animate-fade-in">
         <Card title="Acesso restrito">
@@ -246,6 +258,7 @@ const Discovery = () => {
           const decisions = discovery.decisions || [];
           const rules = discovery.rules || [];
           const tags = discovery.tags || [];
+          const readiness = isDiscoveryReadyForProposal(discovery);
 
           return (
             <Card
@@ -313,9 +326,21 @@ const Discovery = () => {
                 </div>
 
                 <div className="discovery-card-tags">
+                  <Badge variant={readiness.ready ? 'success' : 'warning'}>
+                    {readiness.ready ? 'Pronto para proposta' : `${readiness.missing.length} pendências`}
+                  </Badge>
                   {tags.slice(0, 4).map(tag => <Badge key={tag} variant="secondary">{tag}</Badge>)}
                   {tags.length > 4 && <Badge variant="secondary">+{tags.length - 4}</Badge>}
                 </div>
+
+                {!readiness.ready && (
+                  <section className="discovery-card-list">
+                    <span className="text-xs text-muted">Checklist de prontidão</span>
+                    <div className="flex gap-xs flex-wrap">
+                      {readiness.missing.map(item => <Badge key={item} variant="warning">{item}</Badge>)}
+                    </div>
+                  </section>
+                )}
 
                 <section className="discovery-card-list">
                   <span className="text-xs text-muted">Decisões para o sistema</span>
@@ -412,6 +437,31 @@ const Discovery = () => {
             rows={3}
             value={meetingForm.summary}
             onChange={event => setMeetingForm(prev => ({ ...prev, summary: event.target.value }))}
+            wrapperClassName="mt-md"
+          />
+
+          <div className="grid grid-2 gap-md mt-md">
+            <Textarea
+              label="Oportunidade comercial"
+              rows={3}
+              value={meetingForm.opportunity}
+              onChange={event => setMeetingForm(prev => ({ ...prev, opportunity: event.target.value }))}
+              placeholder="Ex: melhorar conversao, reduzir atrito no contato, automatizar atendimento."
+            />
+            <Textarea
+              label="Escopo sugerido"
+              rows={3}
+              value={meetingForm.scope}
+              onChange={event => setMeetingForm(prev => ({ ...prev, scope: event.target.value }))}
+              placeholder="Ex: diagnostico, prototipo, implementacao com IA e mensuracao."
+            />
+          </div>
+
+          <Input
+            label="Proxima acao"
+            value={meetingForm.nextAction}
+            onChange={event => setMeetingForm(prev => ({ ...prev, nextAction: event.target.value }))}
+            placeholder="Ex: Enviar proposta com diagnostico rapido"
             wrapperClassName="mt-md"
           />
 

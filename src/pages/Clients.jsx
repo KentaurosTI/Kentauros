@@ -7,6 +7,11 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
 import { Users as UsersIcon } from 'lucide-react';
+import {
+  classifyClientHealth,
+  createMonthlyClientReview,
+  getUpsellAlerts,
+} from '../services/continuousImprovement';
 
 const Clients = () => {
   const { leads, clients: registeredClients, projects } = useData();
@@ -25,10 +30,14 @@ const Clients = () => {
     ...registeredClients.map(client => ({
       id: `client-${client.id}`,
       name: client.name,
+      company: client.company || client.name,
       industry: client.segment || client.industry,
       projects: projects.filter(p => p.clientId === client.id || p.client === client.name),
       contact: client.contact,
       email: client.email,
+      nextReviewAt: client.nextReviewAt,
+      retentionRoadmap: client.retentionRoadmap || [],
+      status: client.status,
     })),
     ...clientsFromLeads,
   ].filter((client, index, list) => list.findIndex(item => item.name === client.name) === index);
@@ -46,8 +55,26 @@ const Clients = () => {
           <Card 
             key={client.id}
             title={client.name}
+            headerActions={<Badge variant={classifyClientHealth(client).status === 'green' ? 'success' : classifyClientHealth(client).status === 'yellow' ? 'warning' : 'danger'}>{classifyClientHealth(client).status}</Badge>}
             footer={<Button variant="secondary" size="sm" className="w-full">{t('clients.viewHistory')}</Button>}
           >
+            {(() => {
+              const health = classifyClientHealth(client);
+              const review = createMonthlyClientReview(client, { projects });
+              const upsell = getUpsellAlerts([client], projects)[0];
+              return (
+                <div className="mb-4 p-sm bg-secondary border-radius-sm">
+                  <div className="text-xs text-muted uppercase font-bold">Sucesso do cliente</div>
+                  <div className="text-sm font-bold">{health.action}</div>
+                  <div className="text-xs text-muted">{health.reason}</div>
+                  <div className="flex gap-xs flex-wrap mt-sm">
+                    {review.opportunities.slice(0, 2).map(item => <Badge key={item} variant="secondary">{item}</Badge>)}
+                    {upsell && <Badge variant="accent">Upsell</Badge>}
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="mb-4">
               <div className="text-xs text-muted">{t('common.industry')}</div>
               <div className="text-sm">{client.industry}</div>

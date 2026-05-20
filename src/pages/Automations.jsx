@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useApp } from '../context/AppContext';
 import PageHeader from '../components/ui/PageHeader';
@@ -12,7 +12,15 @@ import Select from '../components/ui/Select';
 import Switch from '../components/ui/Switch';
 import { useI18n } from '../context/I18nContext';
 import { Zap, Play, Settings, History, Plus, AlertCircle, Terminal } from 'lucide-react';
-import { AUTOMATION_TEMPLATES, createAutomationLog, runAutomationAction } from '../services/ecosystemAutomation';
+import {
+  AUTOMATION_TEMPLATES,
+  createAutomationLog,
+  createAutomationObservabilityLearning,
+  createAutomationResponseDashboard,
+  createAutomationResponseLearning,
+  runAutomationAction,
+} from '../services/ecosystemAutomation';
+import { createAutomationRegistry, createHumanReviewQueue } from '../services/continuousImprovement';
 
 const Automations = () => {
   const {
@@ -20,14 +28,17 @@ const Automations = () => {
     leads,
     backlog,
     qaTests,
+    approvalRequests = [],
     updateLead,
     updateAutomation,
+    updateApprovalRequest,
     addAutomation,
+    addApprovalRequest,
     addQaTest,
     addDeployment,
     addLearningEvent,
   } = useData();
-  const { addNotification } = useApp();
+  const { user, addNotification } = useApp();
   const { t } = useI18n();
   
   const [selectedAuto, setSelectedAuto] = useState(null);
@@ -37,6 +48,16 @@ const Automations = () => {
   const totalRuns = automations.reduce((sum, item) => sum + Number(item.runs || 0), 0);
   const totalSuccess = automations.reduce((sum, item) => sum + Number(item.success || 0), 0);
   const successRate = totalRuns ? Math.round((totalSuccess / totalRuns) * 1000) / 10 : 0;
+  const responseDashboard = useMemo(() => createAutomationResponseDashboard({ automations }), [automations]);
+  const automationRegistry = createAutomationRegistry(automations);
+  const reviewQueue = createHumanReviewQueue(automationRegistry.map(item => ({
+    id: item.id,
+    title: item.name,
+    financialImpact: item.status === 'active' ? 5000 : 0,
+  })));
+  const pendingFollowUpApprovals = approvalRequests
+    .filter(item => item.status === 'pending' && item.metadata?.source === 'commercial_followup_automation')
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 
   const [newAutomation, setNewAutomation] = useState({
     name: '',
@@ -44,6 +65,35 @@ const Automations = () => {
     action: t('automations.action.slack'),
     status: 'active'
   });
+
+  const findAutomationForApproval = (approval) => (
+    automations.find(item => String(item.id) === String(approval.metadata?.automationId))
+  );
+
+  const appendAutomationObservabilityLog = (automation, status, message, metadata = {}) => {
+    if (!automation?.id) return;
+    const log = createAutomationLog(status, message, {
+      action: automation.action,
+      approvalRequestId: metadata.approvalRequestId,
+      ...metadata,
+    });
+    const logs = [log, ...(automation.logs || [])].slice(0, 20);
+    updateAutomation(automation.id, { logs, lastRun: new Date().toLocaleTimeString() });
+    addLearningEvent(createAutomationObservabilityLearning({
+      automation,
+      logs,
+      approvalRequests,
+    }));
+    const dashboard = createAutomationResponseDashboard({
+      automations: automations.map(item => (
+        String(item.id) === String(automation.id) ? { ...item, logs } : item
+      )),
+    });
+    const responseLearning = createAutomationResponseLearning({ dashboard });
+    if (responseLearning.metadata.shouldEscalate) {
+      addLearningEvent(responseLearning);
+    }
+  };
 
   const handleCreateAutomation = (e) => {
     e.preventDefault();
@@ -87,16 +137,23 @@ const Automations = () => {
     setTimeout(() => {
       const result = runAutomationAction({
         automation: auto,
-        data: { leads, backlog, qaTests },
-        actions: { updateLead, addQaTest, addDeployment },
+        data: { leads, backlog, qaTests, approvalRequests },
+        actions: { updateLead, addApprovalRequest, addQaTest, addDeployment },
       });
-      const success = result.status === 'success' ? 1 : 0;
-      const log = createAutomationLog(result.status, result.message, { entityId: result.entityId, action: auto.action });
+      const success = ['success', 'pending_approval'].includes(result.status) ? 1 : 0;
+      const log = createAutomationLog(result.observabilityStatus || result.status, result.message, {
+        entityId: result.entityId,
+        action: auto.action,
+        approvalRequestId: result.approvalRequestId,
+        approvalRequired: result.approvalRequired,
+        queuedCount: result.queuedCount,
+      });
+      const logs = [log, ...(auto.logs || [])].slice(0, 20);
       updateAutomation(auto.id, { 
         runs: Number(auto.runs || 0) + 1,
         success: Number(auto.success || 0) + success,
         lastRun: new Date().toLocaleTimeString(),
-        logs: [log, ...(auto.logs || [])].slice(0, 20),
+        logs,
       });
       addLearningEvent({
         source: 'automation',
@@ -106,9 +163,82 @@ const Automations = () => {
         tags: ['Automation', auto.module || 'general', result.status],
         metadata: { automationId: auto.id, action: auto.action, result },
       });
-      addNotification(result.status === 'success' ? t('common.success') : 'Automação sem ação', result.message, result.status === 'success' ? 'success' : 'warning');
+      addLearningEvent(createAutomationObservabilityLearning({
+        automation: auto,
+        logs,
+        approvalRequests,
+      }));
+      const dashboard = createAutomationResponseDashboard({
+        automations: automations.map(item => (
+          String(item.id) === String(auto.id) ? { ...item, logs } : item
+        )),
+      });
+      const responseLearning = createAutomationResponseLearning({ dashboard });
+      if (responseLearning.metadata.shouldEscalate) {
+        addLearningEvent(responseLearning);
+      }
+      addNotification(['success', 'pending_approval'].includes(result.status) ? t('common.success') : 'Automacao sem acao', result.message, ['success', 'pending_approval'].includes(result.status) ? 'success' : 'warning');
       setIsRunning(null);
     }, 1500);
+  };
+
+  const handleApproveFollowUp = (approval) => {
+    const reviewedAt = new Date().toISOString();
+    updateApprovalRequest(approval.id, {
+      status: 'approved',
+      reviewedAt,
+      reviewedBy: user?.id || 'user',
+      appliedStatus: 'ready_for_manual_send',
+    });
+    updateLead(approval.metadata.leadId, {
+      followUpStatus: 'approved',
+      nextAction: 'Follow-up aprovado para envio manual',
+      nextFollowUpAt: reviewedAt,
+    });
+    appendAutomationObservabilityLog(
+      findAutomationForApproval(approval),
+      'approved',
+      `ApprovalRequest ${approval.id} aprovado para follow-up consultivo.`,
+      { approvalRequestId: approval.id, leadId: approval.metadata.leadId }
+    );
+    addLearningEvent({
+      source: 'automation',
+      event_type: 'commercial_followup_approved',
+      title: `Follow-up aprovado - ${approval.payload?.company || approval.title}`,
+      content: 'Usuario aprovou follow-up consultivo. Nenhum envio externo foi disparado automaticamente.',
+      tags: ['Automation', 'Follow-up', 'Approval'],
+      metadata: {
+        approvalId: approval.id,
+        leadId: approval.metadata.leadId,
+        responseMetric: 'followup_response_rate',
+        responseTracking: { approved: 1, responded: 0, responseRate: 0 },
+      },
+    });
+    addNotification('Follow-up aprovado', 'Lead marcado para envio manual sem disparo externo automatico.', 'success');
+  };
+
+  const handleRejectFollowUp = (approval) => {
+    const reviewedAt = new Date().toISOString();
+    updateApprovalRequest(approval.id, {
+      status: 'rejected',
+      reviewedAt,
+      reviewedBy: user?.id || 'user',
+    });
+    appendAutomationObservabilityLog(
+      findAutomationForApproval(approval),
+      'rejected',
+      `ApprovalRequest ${approval.id} recusado antes de qualquer envio externo.`,
+      { approvalRequestId: approval.id, leadId: approval.metadata.leadId }
+    );
+    addLearningEvent({
+      source: 'automation',
+      event_type: 'commercial_followup_rejected',
+      title: `Follow-up recusado - ${approval.payload?.company || approval.title}`,
+      content: 'Usuario recusou o follow-up sugerido antes de qualquer envio externo.',
+      tags: ['Automation', 'Follow-up', 'Rejected'],
+      metadata: { approvalId: approval.id, leadId: approval.metadata.leadId },
+    });
+    addNotification('Follow-up recusado', 'A solicitacao foi retirada da fila pendente.', 'info');
   };
 
   return (
@@ -135,6 +265,92 @@ const Automations = () => {
         <StatCard label={t('automations.totalRuns')} value={totalRuns} trend="up" />
         <StatCard label={t('automations.successRate')} value={`${successRate}%`} trend="up" />
       </div>
+
+      <Card
+        title="Painel de resposta das automacoes aprovadas"
+        headerActions={<Badge variant={responseDashboard.totals.failureRate > 25 ? 'danger' : responseDashboard.totals.responseRate >= 20 ? 'success' : 'warning'}>{responseDashboard.totals.responseRate}% resposta</Badge>}
+        className="mb-xl"
+      >
+        <div className="grid mb-md" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+          <StatCard label="Aprovados" value={responseDashboard.totals.approved} />
+          <StatCard label="Enviados" value={responseDashboard.totals.sent} />
+          <StatCard label="Falhas" value={responseDashboard.totals.failed} />
+          <StatCard label="Responderam" value={responseDashboard.totals.responded} />
+          <StatCard label="Oportunidades" value={responseDashboard.totals.opportunity} />
+        </div>
+        <div className="flex flex-col gap-xs">
+          {responseDashboard.rows.slice(0, 6).map(row => (
+            <div key={row.automationId || row.name} className="p-sm bg-secondary border-radius-sm">
+              <div className="flex justify-between gap-md mb-xs">
+                <strong>{row.name}</strong>
+                <Badge variant={row.risk === 'alto' ? 'danger' : row.risk === 'medio' ? 'warning' : 'success'}>
+                  {row.risk}
+                </Badge>
+              </div>
+              <div className="grid grid-4 text-xs text-muted">
+                <span>Resposta: {row.responseRate}%</span>
+                <span>Falha: {row.failureRate}%</span>
+                <span>Oportunidade: {row.opportunityRate}%</span>
+                <span>Enviados: {row.sent}</span>
+              </div>
+            </div>
+          ))}
+          {responseDashboard.rows.length === 0 && (
+            <span className="text-sm text-muted">Nenhum log executivo registrado para medir resposta.</span>
+          )}
+        </div>
+      </Card>
+
+      <div className="grid grid-2 mb-xl">
+        <Card title="Central de automações">
+          <div className="flex flex-col gap-xs">
+            {automationRegistry.slice(0, 5).map(item => (
+              <div key={item.id} className="flex justify-between p-sm bg-secondary border-radius-sm">
+                <span>{item.name}</span>
+                <Badge variant={item.status === 'active' ? 'success' : 'secondary'}>{item.lastResult}</Badge>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card title="Revisão humana">
+          <div className="flex flex-col gap-xs">
+            {reviewQueue.slice(0, 5).map(item => (
+              <div key={item.id} className="p-sm bg-secondary border-radius-sm">
+                <strong>{item.title}</strong>
+                <div className="text-xs text-muted">{item.reviewReason}</div>
+              </div>
+            ))}
+            {reviewQueue.length === 0 && <span className="text-sm text-muted">Nenhuma recomendação sensível pendente.</span>}
+          </div>
+        </Card>
+      </div>
+
+      <Card
+        title="Follow-ups aguardando aprovacao"
+        headerActions={<Badge variant={pendingFollowUpApprovals.length ? 'warning' : 'success'}>{pendingFollowUpApprovals.length} pendente(s)</Badge>}
+        className="mb-xl"
+      >
+        <div className="flex flex-col gap-sm">
+          {pendingFollowUpApprovals.slice(0, 8).map(approval => (
+            <div key={approval.id} className="p-md bg-secondary border-radius-sm">
+              <div className="flex justify-between gap-md">
+                <div className="flex flex-col gap-xs">
+                  <strong>{approval.payload?.company || approval.title}</strong>
+                  <span className="text-xs text-muted">Requer aprovacao humana antes de WhatsApp, e-mail ou API externa.</span>
+                  <span className="text-xs mono opacity-70">{approval.payload?.message}</span>
+                </div>
+                <div className="flex gap-xs items-start">
+                  <Button variant="primary" size="sm" onClick={() => handleApproveFollowUp(approval)}>Aprovar</Button>
+                  <Button variant="danger" size="sm" onClick={() => handleRejectFollowUp(approval)}>Recusar</Button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {pendingFollowUpApprovals.length === 0 && (
+            <span className="text-sm text-muted">Nenhum follow-up comercial aguardando aprovacao humana.</span>
+          )}
+        </div>
+      </Card>
 
       <div className="grid grid-2">
         {automations.map(auto => (

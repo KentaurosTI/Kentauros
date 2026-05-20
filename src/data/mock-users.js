@@ -33,15 +33,15 @@ export const ROLES = {
 };
 
 export const PERMISSIONS = {
-  admin:     { dashboard:true, leads:true, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:true, qa:true, deploy:true, support:true, clients:true, users:true, automations:true, settings:true },
+  admin:     { dashboard:true, leads:true, discovery:true, proposals:true, projects:true, backlog:true, ux:true, prototypes:true, dev:true, qa:true, deploy:true, support:true, clients:true, users:true, automations:true, settings:true, ceo:true },
   comercial: { dashboard:true, leads:true, discovery:false, proposals:true, projects:false, backlog:false, ux:false, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:true },
   leadhunter:{ dashboard:false, leads:true, discovery:true, proposals:false, projects:false, backlog:false, ux:false, prototypes:true, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:false },
   prevendas: { dashboard:true, leads:true, discovery:true, proposals:true, projects:false, backlog:false, ux:false, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:true },
   ba:        { dashboard:true, leads:false, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:false, qa:false, deploy:false, support:false, clients:true, users:false, automations:false, settings:true },
   po:        { dashboard:true, leads:false, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:true, qa:true, deploy:false, support:false, clients:true, users:false, automations:true, settings:true },
   pm:        { dashboard:true, leads:false, discovery:true, proposals:true, projects:true, backlog:true, ux:true, dev:true, qa:true, deploy:true, support:true, clients:true, users:false, automations:true, settings:true },
-  ux:        { dashboard:true, leads:false, discovery:false, proposals:false, projects:true, backlog:true, ux:true, dev:false, qa:false, deploy:false, support:false, clients:false, users:false, automations:false, settings:true },
-  dev:       { dashboard:true, leads:false, discovery:false, proposals:false, projects:true, backlog:true, ux:false, dev:true, qa:false, deploy:false, support:false, clients:false, users:false, automations:false, settings:true },
+  ux:        { dashboard:true, leads:false, discovery:false, proposals:false, projects:true, backlog:true, ux:true, prototypes:true, dev:false, qa:false, deploy:false, support:false, clients:false, users:false, automations:false, settings:true },
+  dev:       { dashboard:true, leads:false, discovery:false, proposals:false, projects:true, backlog:true, ux:false, prototypes:true, dev:true, qa:false, deploy:false, support:false, clients:false, users:false, automations:false, settings:true },
   qa:        { dashboard:true, leads:false, discovery:false, proposals:false, projects:true, backlog:true, ux:false, dev:false, qa:true, deploy:false, support:false, clients:false, users:false, automations:false, settings:true },
   devops:    { dashboard:true, leads:false, discovery:false, proposals:false, projects:true, backlog:false, ux:false, dev:false, qa:false, deploy:true, support:false, clients:false, users:false, automations:true, settings:true },
   suporte:   { dashboard:true, leads:false, discovery:false, proposals:false, projects:false, backlog:false, ux:false, dev:false, qa:false, deploy:false, support:true, clients:true, users:false, automations:false, settings:true },

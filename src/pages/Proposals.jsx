@@ -9,6 +9,12 @@ import Button from '../components/ui/Button';
 import Select from '../components/ui/Select';
 import { canAccessAdmin, getMeetingReadyClients } from '../services/operationalWorkflow';
 import { buildProposalDocument, downloadTextFile, renderProposalDocumentText, buildContractDocument, downloadContractDocument } from '../services/deliveryDocuments';
+import {
+  buildProposalFromDiscovery,
+  buildRetentionClientFromProposal,
+  findExistingProposal,
+  isDiscoveryReadyForProposal,
+} from '../services/commercialFlow';
 
 const getStatusType = (status) => {
   if (['approved', 'signed', 'won'].includes(status)) return 'success';
@@ -18,7 +24,7 @@ const getStatusType = (status) => {
 };
 
 const Proposals = () => {
-  const { proposals = [], discoveries, leads, clients, addProposal, updateProposal, deleteProposal, addProject, addBacklog, addQaTest, addDeployment, addAutomation, addApprovalRequest, addLearningEvent } = useData();
+  const { proposals = [], discoveries, leads, clients, addClient, addProposal, updateProposal, deleteProposal, addProject, addBacklog, addQaTest, addDeployment, addAutomation, addApprovalRequest, addLearningEvent } = useData();
   const { user, addNotification } = useApp();
 
   const [selectedProposalForContract, setSelectedProposalForContract] = useState(null);
@@ -135,22 +141,32 @@ const Proposals = () => {
       return;
     }
 
-    addProposal({
-      discoveryId: selectedMeeting.discoveryId,
-      clientName: selectedMeeting.clientName,
-      title: `Proposta Comercial - ${selectedMeeting.clientName}`,
-      status: 'draft',
-      value: selectedMeeting.suggestedValue,
-      validUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      createdAt: new Date().toISOString().split('T')[0],
-      documents: ['Escopo comercial', 'Cronograma', 'Termos de aceite'],
-      summary: selectedMeeting.summary,
-      approvalFlow: [
-        { step: 'Comercial', status: 'approved', at: new Date().toISOString(), userId: user?.id },
-        { step: 'Admin', status: 'pending' },
-        { step: 'Cliente', status: 'pending' },
-      ],
+    const discovery = discoveries.find(item => String(item.id) === String(selectedMeeting.discoveryId)) || selectedMeeting;
+    const readiness = isDiscoveryReadyForProposal({
+      ...discovery,
+      estimatedValue: discovery.estimatedValue || selectedMeeting.suggestedValue,
+      nextAction: discovery.nextAction || 'Enviar proposta',
     });
+    if (!readiness.ready) {
+      addNotification('Discovery incompleto', `Preencha antes da proposta: ${readiness.missing.join(', ')}.`, 'error');
+      return;
+    }
+
+    const existingProposal = findExistingProposal(proposals, discovery);
+    if (existingProposal) {
+      updateProposal(existingProposal.id, {
+        value: Number(discovery.estimatedValue || selectedMeeting.suggestedValue || existingProposal.value || 0),
+        summary: discovery.summary || existingProposal.summary,
+      });
+      addNotification('Proposta atualizada', `Proposta existente de ${selectedMeeting.clientName} foi atualizada.`, 'success');
+      return;
+    }
+
+    addProposal(buildProposalFromDiscovery({
+      ...discovery,
+      estimatedValue: discovery.estimatedValue || selectedMeeting.suggestedValue,
+      nextAction: discovery.nextAction || 'Enviar proposta',
+    }, user));
 
     addNotification('Proposta gerada', `Proposta criada com base na reuniao de ${selectedMeeting.clientName}.`, 'success');
   };
@@ -303,6 +319,9 @@ const Proposals = () => {
       tags: ['Proposal', 'Project', 'Approval'],
       metadata: { proposalId: proposal.id, projectId: project.id },
     });
+    if (!clients.some(client => client.company === proposal.clientName || client.name === proposal.clientName)) {
+      addClient(buildRetentionClientFromProposal(proposal));
+    }
     addNotification('Projeto criado', 'Proposta assinada e projeto liberado para inicio.', 'success');
   };
 

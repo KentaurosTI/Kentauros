@@ -1,12 +1,20 @@
 import { useData } from '../context/DataContext';
 import { useApp } from '../context/AppContext';
+import {
+  buildDiscoveryFromLead,
+  buildProposalFromDiscovery,
+  buildRetentionClientFromProposal,
+  findExistingProposal,
+} from '../services/commercialFlow';
 
 export const useWorkflow = () => {
   const { 
     updateLead, addDiscovery, updateDiscovery, addProposal, 
     updateProposal, addProject, addBacklog, addQaTest, addDeployment, addAutomation,
+    addClient, clients = [], proposals = [],
     addLearningEvent,
   } = useData();
+  const { user } = useApp();
   const { addNotification: notify } = useApp();
 
   const promoteLeadToDiscovery = (lead) => {
@@ -14,21 +22,7 @@ export const useWorkflow = () => {
       status: 'discovery',
       lastActivity: new Date().toISOString().split('T')[0],
     });
-    addDiscovery({
-      leadId: lead.id,
-      clientName: lead.company,
-      title: `Discovery: ${lead.company}`,
-      status: 'in_progress',
-      meetingStatus: 'reuniao_confirmada',
-      tags: ['reuniao_confirmada', 'lead_qualificado'],
-      recordings: [],
-      decisions: [],
-      rules: ['Toda decisao registrada deve alimentar proposta, backlog, QA e deploy.'],
-      createdAt: new Date().toISOString().split('T')[0],
-      summary: `Iniciado discovery para ${lead.company}`,
-      hours: 0,
-      estimatedValue: lead.value
-    });
+    addDiscovery(buildDiscoveryFromLead(lead));
     addLearningEvent({
       source: 'workflow',
       event_type: 'lead_promoted_to_discovery',
@@ -42,15 +36,16 @@ export const useWorkflow = () => {
 
   const approveDiscovery = (discovery) => {
     updateDiscovery(discovery.id, { status: 'approved', completedAt: new Date().toISOString().split('T')[0] });
-    addProposal({
-      discoveryId: discovery.id,
-      clientName: discovery.clientName,
-      title: `Proposta: ${discovery.clientName}`,
-      status: 'draft',
-      value: discovery.estimatedValue,
-      createdAt: new Date().toISOString().split('T')[0],
-      validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    });
+    const existingProposal = findExistingProposal(proposals, discovery);
+    if (existingProposal) {
+      updateProposal(existingProposal.id, {
+        value: Number(discovery.estimatedValue || existingProposal.value || 0),
+        summary: discovery.summary || existingProposal.summary,
+        leadId: discovery.leadId || existingProposal.leadId,
+      });
+    } else {
+      addProposal(buildProposalFromDiscovery(discovery, user));
+    }
     addAutomation({
       name: `Gerar proposta - ${discovery.clientName}`,
       trigger: 'discovery.status = approved',
@@ -69,7 +64,7 @@ export const useWorkflow = () => {
       tags: ['Discovery', 'Proposal'],
       metadata: { discoveryId: discovery.id },
     });
-    notify('Workflow', `Discovery de ${discovery.clientName} aprovado. Proposta gerada.`, 'success');
+    notify('Workflow', `Discovery de ${discovery.clientName} aprovado. Proposta ${existingProposal ? 'atualizada' : 'gerada'}.`, 'success');
   };
 
   const approveProposal = (proposal) => {
@@ -135,6 +130,9 @@ export const useWorkflow = () => {
       tags: ['Proposal', 'Project', 'SDD'],
       metadata: { proposalId: proposal.id, projectId },
     });
+    if (!clients.some(client => client.company === proposal.clientName || client.name === proposal.clientName)) {
+      addClient(buildRetentionClientFromProposal(proposal));
+    }
     notify('Workflow', `Proposta aprovada! Projeto ${newProject.name} criado.`, 'success');
   };
 

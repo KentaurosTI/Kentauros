@@ -364,7 +364,7 @@ export const getDeployReadiness = (deployments = [], projects = [], backlog = []
   };
 });
 
-export const getDashboardMetrics = ({ leads = [], projects = [], backlog = [], proposals = [], qaTests = [], deployments = [], automations = [] }) => {
+export const getDashboardMetrics = ({ leads = [], discoveries = [], clients = [], projects = [], backlog = [], proposals = [], qaTests = [], deployments = [], automations = [] }) => {
   const signedRevenue = [
     ...proposals.filter(proposal => ['approved', 'signed', 'won'].includes(proposal.status)),
     ...leads.filter(lead => lead.status === 'won' || hasUserTag(lead, 'ganho') || hasUserTag(lead, 'assinado'))
@@ -389,6 +389,13 @@ export const getDashboardMetrics = ({ leads = [], projects = [], backlog = [], p
     wonLeads,
     avgReadiness,
     conversionRate: leads.length ? Math.round((wonLeads / leads.length) * 100) : 0,
+    capturedLeads: leads.length,
+    discoveryCount: discoveries.length,
+    proposalCount: proposals.length,
+    clientCount: clients.length,
+    averageTicket: proposals.length ? Math.round(proposals.reduce((sum, proposal) => sum + Number(proposal.value || 0), 0) / proposals.length) : 0,
+    leadToProposalRate: leads.length ? Math.round((proposals.length / leads.length) * 100) : 0,
+    proposalToClientRate: proposals.length ? Math.round((clients.length / proposals.length) * 100) : 0,
     activeProjects,
     openBacklog,
     signedRevenue,
@@ -410,17 +417,21 @@ export const getDashboardMetrics = ({ leads = [], projects = [], backlog = [], p
   };
 };
 
-export const getScopedDashboardData = ({ user, leads = [], projects = [], backlog = [], proposals = [], qaTests = [], deployments = [], automations = [] }) => {
+export const getScopedDashboardData = ({ user, leads = [], discoveries = [], clients = [], projects = [], backlog = [], proposals = [], qaTests = [], deployments = [], automations = [] }) => {
   if (canAccessAdmin(user)) {
-    return { leads, projects, backlog, proposals, qaTests, deployments, automations };
+    return { leads, discoveries, clients, projects, backlog, proposals, qaTests, deployments, automations };
   }
 
   if (canAccessCommercial(user)) {
     const scopedLeads = leads.filter(lead => lead.user_id === user?.id || lead.assignedTo === user?.id || lead.commercialOwnerUserId === user?.id);
     const clientNames = new Set(scopedLeads.map(lead => lead.company));
     const scopedProposals = proposals.filter(proposal => clientNames.has(proposal.clientName) || proposal.user_id === user?.id);
+    const scopedDiscoveries = discoveries.filter(discovery => clientNames.has(discovery.clientName) || discovery.user_id === user?.id);
+    const scopedClients = clients.filter(client => clientNames.has(client.company || client.name) || client.user_id === user?.id);
     return {
       leads: scopedLeads,
+      discoveries: scopedDiscoveries,
+      clients: scopedClients,
       proposals: scopedProposals,
       projects: [],
       backlog: [],
@@ -445,5 +456,5 @@ export const getScopedDashboardData = ({ user, leads = [], projects = [], backlo
     };
   }
 
-  return { leads: [], projects: [], backlog: [], proposals: [], qaTests: [], deployments: [], automations: [] };
+  return { leads: [], discoveries: [], clients: [], projects: [], backlog: [], proposals: [], qaTests: [], deployments: [], automations: [] };
 };

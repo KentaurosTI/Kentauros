@@ -3,6 +3,7 @@ import { prototypeService } from '../services/prototypeService';
 import { openCodeService } from '../services/openCodeService';
 import { useI18n } from '../context/I18nContext';
 import { useData } from '../context/DataContext';
+import { useApp } from '../context/AppContext';
 import './Prototypes.css';
 
 const PAGE_ICONS = { home: '🏠', about: 'ℹ️', services: '⚙️', contact: '📬' };
@@ -10,8 +11,8 @@ const PAGE_LABELS = { home: 'Home', about: 'Sobre', services: 'Serviços', conta
 
 export default function Prototypes() {
   const { t } = useI18n();
-  const { projects, backlog, addLearningEvent, addWorkflowRun, updateBacklog } = useData();
-  const [prototypes, setPrototypes] = useState([]);
+  const { addNotification } = useApp();
+  const { projects, backlog, leads = [], prototypes = [], addPrototype, updatePrototype, deletePrototype, addLearningEvent, addWorkflowRun, updateBacklog } = useData();
   const [selected, setSelected] = useState(null);
   const [activePage, setActivePage] = useState('home');
   const [showGenerator, setShowGenerator] = useState(false);
@@ -30,11 +31,21 @@ export default function Prototypes() {
   const iframeRef = useRef(null);
 
   useEffect(() => {
-    setPrototypes(prototypeService.loadAll());
-  }, []);
+    if (prototypes.length === 0) {
+      prototypeService.loadAll().forEach(proto => addPrototype(proto));
+    }
+  }, [addPrototype, prototypes.length]);
 
   const handleGenerate = async () => {
-    if (!form.company.trim()) return;
+    const relatedLead = leads.find(lead => lead.company === form.company || lead.website === form.website);
+    if (!form.company.trim()) {
+      addNotification('Dados obrigatorios', 'Informe a empresa antes de gerar o prototipo.', 'error');
+      return;
+    }
+    if (!form.website.trim() && !form.projectId && !relatedLead?.website && !relatedLead?.metadata?.website) {
+      addNotification('Site necessario', 'Informe um site ou vincule um projeto/lead com contexto suficiente para gerar o prototipo.', 'error');
+      return;
+    }
     setGenerating(true);
     setGenerationProgress(0);
 
@@ -53,9 +64,14 @@ export default function Prototypes() {
           setGenerationProgress(progress);
         }
       );
+      const relatedLead = leads.find(lead => lead.company === (project?.client || form.company) || lead.website === form.website);
+      proto.lead_id = relatedLead?.id || proto.lead_id;
+      proto.client_name = project?.client || form.company;
+      proto.website_url = form.website || relatedLead?.website || relatedLead?.metadata?.website || '';
       proto.project_id = project?.id || '';
       proto.project_name = project?.name || '';
       prototypeService.save(proto);
+      addPrototype(proto);
       addLearningEvent({
         source: 'prototype',
         event_type: 'prototype_generated',
@@ -65,8 +81,6 @@ export default function Prototypes() {
         tags: ['Prototype', 'UX', 'Discovery'],
         metadata: { prototypeId: proto.id, projectName: proto.project_name, clientName: proto.client_name },
       });
-      const all = prototypeService.loadAll();
-      setPrototypes(all);
       setSelected(proto);
       setShowGenerator(false);
       setActiveTab('preview');
@@ -79,7 +93,7 @@ export default function Prototypes() {
 
   const handleDelete = (id) => {
     prototypeService.delete(id);
-    setPrototypes(prototypeService.loadAll());
+    deletePrototype(id);
     if (selected?.id === id) setSelected(null);
   };
 
@@ -112,7 +126,7 @@ export default function Prototypes() {
         metadata: { prototypeId: updated.id, status: 'approved' },
       });
       setSelected(updated);
-      setPrototypes(prototypeService.loadAll());
+      updatePrototype(updated.id, updated);
     }
   };
 
@@ -148,7 +162,7 @@ export default function Prototypes() {
         metadata: { prototypeId: selected.id, linkedTasks: linkedTasks.map(task => task.id) },
       });
       setSelected(updated);
-      setPrototypes(prototypeService.loadAll());
+      updatePrototype(updated.id, updated);
     } catch (e) {
       console.error(e);
     } finally {

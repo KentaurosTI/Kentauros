@@ -3,10 +3,12 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/layout/Layout';
 import { useApp } from './context/AppContext';
 import { usePermissions } from './hooks/usePermissions';
+import { getDefaultRouteForUser } from './services/accessPolicy';
 
 // Pages
 import Dashboard from './pages/Dashboard';
 import Leads from './pages/Leads';
+import LeadOpportunity from './pages/LeadOpportunity';
 import Projects from './pages/Projects';
 import Backlog from './pages/Backlog';
 import Support from './pages/Support';
@@ -33,6 +35,7 @@ import SmartAnalytics from './pages/SmartAnalytics';
 function App() {
   const { user, loading } = useApp();
   const { hasPermission } = usePermissions();
+  const defaultRoute = getDefaultRouteForUser(user);
 
   if (loading) return <div className="loader">Initializing OS...</div>;
 
@@ -43,38 +46,39 @@ function App() {
   return (
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/kanban" element={hasPermission('projects') ? <Kanban /> : <Navigate to="/" />} />
-        <Route path="/leads" element={hasPermission('leads') ? <Leads /> : <Navigate to="/" />} />
-        <Route path="/discovery" element={hasPermission('discovery') ? <Discovery /> : <Navigate to="/" />} />
-        <Route path="/proposals" element={hasPermission('proposals') ? <Proposals /> : <Navigate to="/" />} />
-        <Route path="/projects" element={hasPermission('projects') ? <Projects /> : <Navigate to="/" />} />
-        <Route path="/backlog" element={hasPermission('backlog') ? <Backlog /> : <Navigate to="/" />} />
-        <Route path="/ux" element={hasPermission('ux') ? <UXDesign /> : <Navigate to="/" />} />
-        <Route path="/dev" element={hasPermission('dev') ? <Development /> : <Navigate to="/" />} />
-        <Route path="/qa" element={hasPermission('qa') ? <QA /> : <Navigate to="/" />} />
-        <Route path="/deploy" element={hasPermission('deploy') ? <Deploy /> : <Navigate to="/" />} />
-        <Route path="/support" element={hasPermission('support') ? <Support /> : <Navigate to="/" />} />
-        <Route path="/clients" element={hasPermission('clients') ? <Clients /> : <Navigate to="/" />} />
-        <Route path="/users" element={hasPermission('users') ? <Users /> : <Navigate to="/" />} />
-        <Route path="/automations" element={hasPermission('automations') ? <Automations /> : <Navigate to="/" />} />
-        <Route path="/settings" element={hasPermission('settings') ? <Settings /> : <Navigate to="/" />} />
-        <Route path="/prototypes" element={hasPermission('prototypes') ? <Prototypes /> : <Navigate to="/" />} />
-        <Route path="/opencode" element={hasPermission('dev') || hasPermission('qa') ? <CodeGenerator /> : <Navigate to="/" />} />
+        <Route path="/" element={hasPermission('dashboard') ? <Dashboard /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/kanban" element={hasPermission('projects') ? <Kanban /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/leads" element={hasPermission('leads') ? <Leads /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/leads/:leadId" element={hasPermission('leads') ? <LeadOpportunity /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/discovery" element={hasPermission('discovery') ? <Discovery /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/proposals" element={hasPermission('proposals') ? <Proposals /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/projects" element={hasPermission('projects') ? <Projects /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/backlog" element={hasPermission('backlog') ? <Backlog /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/ux" element={hasPermission('ux') ? <UXDesign /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/dev" element={hasPermission('dev') ? <Development /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/qa" element={hasPermission('qa') ? <QA /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/deploy" element={hasPermission('deploy') ? <Deploy /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/support" element={hasPermission('support') ? <Support /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/clients" element={hasPermission('clients') ? <Clients /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/users" element={hasPermission('users') ? <Users /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/automations" element={hasPermission('automations') ? <Automations /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/settings" element={hasPermission('settings') ? <Settings /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/prototypes" element={hasPermission('prototypes') ? <Prototypes /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/opencode" element={hasPermission('dev') || hasPermission('qa') ? <CodeGenerator /> : <Navigate to={defaultRoute} replace />} />
         
         {/* CEO Agent */}
-        <Route path="/ceo" element={hasPermission('admin') ? <CEO /> : <Navigate to="/" />} />
-        <Route path="/ceo/:projectId" element={hasPermission('admin') ? <CEO /> : <Navigate to="/" />} />
+        <Route path="/ceo" element={hasPermission('ceo') ? <CEO /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/ceo/:projectId" element={hasPermission('ceo') ? <CEO /> : <Navigate to={defaultRoute} replace />} />
 
         {/* Analytics */}
-        <Route path="/analytics" element={hasPermission('admin') ? <SmartAnalytics /> : <Navigate to="/" />} />
+        <Route path="/analytics" element={hasPermission('admin') ? <SmartAnalytics /> : <Navigate to={defaultRoute} replace />} />
 
         {/* Enterprise Modules */}
-        <Route path="/audit" element={hasPermission('audit') ? <Audit /> : <Navigate to="/" />} />
-        <Route path="/smart-logs" element={hasPermission('logs') ? <SmartLogs /> : <Navigate to="/" />} />
-        <Route path="/productivity" element={hasPermission('productivity') ? <Productivity /> : <Navigate to="/" />} />
+        <Route path="/audit" element={hasPermission('audit') ? <Audit /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/smart-logs" element={hasPermission('logs') ? <SmartLogs /> : <Navigate to={defaultRoute} replace />} />
+        <Route path="/productivity" element={hasPermission('productivity') ? <Productivity /> : <Navigate to={defaultRoute} replace />} />
         
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={defaultRoute} replace />} />
       </Routes>
     </Layout>
   );

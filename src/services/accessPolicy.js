@@ -1,4 +1,4 @@
-import { PERMISSIONS } from '../data/mock-users';
+import { PERMISSIONS } from '../data/mock-users.js';
 import {
   canAccessAdmin,
   canAccessCommercial,
@@ -6,7 +6,7 @@ import {
   canAccessDev,
   canAccessQa,
   canAccessUx,
-} from './operationalWorkflow';
+} from './operationalWorkflow.js';
 
 export const MODULE_OWNERSHIP = {
   dashboard: ['ADMIN', 'COMERCIAL', 'DEV', 'UX', 'QA', 'DEVOPS', 'SUPORTE', 'CLIENTE'],
@@ -30,6 +30,7 @@ export const MODULE_OWNERSHIP = {
   productivity: ['ADMIN'],
   logs: ['ADMIN'],
   audit: ['ADMIN'],
+  ceo: ['ADMIN'],
 };
 
 export const hasModuleAccess = (user, module) => {
@@ -40,7 +41,7 @@ export const hasModuleAccess = (user, module) => {
   }
 
   if (module === 'dashboard') return true;
-  if (module === 'discovery' || module === 'users' || module === 'settings' || module === 'productivity' || module === 'logs' || module === 'audit') {
+  if (module === 'discovery' || module === 'users' || module === 'settings' || module === 'productivity' || module === 'logs' || module === 'audit' || module === 'ceo') {
     return canAccessAdmin(user);
   }
   if (module === 'leads' || module === 'proposals' || module === 'clients') return canAccessCommercial(user);
@@ -50,6 +51,30 @@ export const hasModuleAccess = (user, module) => {
   if (module === 'deploy' || module === 'automations') return canAccessDeploy(user);
 
   return rolePermissions ? !!rolePermissions[module] : false;
+};
+
+const DEFAULT_ROUTE_ORDER = [
+  ['dashboard', '/'],
+  ['leads', '/leads'],
+  ['discovery', '/discovery'],
+  ['clients', '/clients'],
+  ['prototypes', '/prototypes'],
+  ['proposals', '/proposals'],
+  ['projects', '/projects'],
+  ['kanban', '/kanban'],
+  ['backlog', '/backlog'],
+  ['ux', '/ux'],
+  ['dev', '/dev'],
+  ['qa', '/qa'],
+  ['deploy', '/deploy'],
+  ['support', '/support'],
+  ['automations', '/automations'],
+  ['settings', '/settings'],
+];
+
+export const getDefaultRouteForUser = (user) => {
+  const match = DEFAULT_ROUTE_ORDER.find(([module]) => hasModuleAccess(user, module));
+  return match?.[1] || '/';
 };
 
 export const getUserScope = (user) => {
