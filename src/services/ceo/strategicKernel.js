@@ -109,6 +109,7 @@ const IMPLEMENTED_CEO_SUGGESTIONS = new Set([
   'ceo_mastermind_revenue_retention_kpi_board',
   'ceo_mastermind_raw_context_consolidation_alert',
   'ceo_mastermind_revenue_kpi_validation_cycle',
+  'ceo_mastermind_ai_reuse_standardization_playbook',
 ]);
 
 export const isImplementedCeoSuggestion = suggestionId =>
@@ -1988,6 +1989,90 @@ export const createAiReuseImpactValidation = ({
         promotedPatterns: promoted.map(kpi => kpi.pattern),
         blockedPatterns: blocked.map(kpi => kpi.pattern),
         agentAutomationGate: 'BLOQUEADO_ATE_EVIDENCIA_DE_GANHO',
+      },
+    },
+  };
+};
+
+const buildAiStandardArtifacts = pattern => {
+  const artifacts = ['playbook', 'template'];
+  if (pattern.timeSavedHours >= 8 || pattern.reworkReductionPercent >= 25) artifacts.push('service');
+  if ((pattern.proposedAgents || []).length && pattern.impactedProjects >= 2) artifacts.push('agent_internal');
+  return Array.from(new Set(artifacts));
+};
+
+export const createAiReuseStandardizationPlaybook = (validation = {}) => {
+  const promotedPatterns = validation.promotedPatterns || [];
+  const blockedPatterns = validation.blockedPatterns || [];
+
+  const standards = promotedPatterns.map(pattern => ({
+    id: `ai_standard_${normalizeTaskId(pattern.pattern)}`,
+    pattern: pattern.pattern,
+    status: 'promoted_to_internal_standard',
+    artifacts: buildAiStandardArtifacts(pattern),
+    reapplyProjects: pattern.projects || [],
+    owner: 'CTO / MasterMind CEO',
+    successCriteria: pattern.successCriteria,
+    reuseRule: 'Reaplicar primeiro como playbook/template/service antes de criar novo agent especializado.',
+    automationStatus: 'approval_required_before_external_execution',
+    evidence: {
+      impactedProjects: pattern.impactedProjects,
+      timeSavedHours: pattern.timeSavedHours,
+      reworkReductionPercent: pattern.reworkReductionPercent,
+      conversionLiftPercent: pattern.conversionLiftPercent,
+      operationalGainScore: pattern.operationalGainScore,
+    },
+  }));
+
+  const experiments = blockedPatterns.map(pattern => ({
+    id: `ai_experiment_${normalizeTaskId(pattern.pattern)}`,
+    pattern: pattern.pattern,
+    status: 'experiment_measure_again',
+    reapplyProjects: pattern.projects || [],
+    nextMeasurementCycle: 'Medir novamente tempo economizado, projetos impactados, retrabalho e conversao antes de promover.',
+    automationStatus: 'blocked_until_next_measurement_cycle',
+    blockedReason: pattern.decision || 'Sem evidencia suficiente de ganho operacional ou comercial.',
+    evidence: {
+      impactedProjects: pattern.impactedProjects,
+      timeSavedHours: pattern.timeSavedHours,
+      reworkReductionPercent: pattern.reworkReductionPercent,
+      conversionLiftPercent: pattern.conversionLiftPercent,
+      operationalGainScore: pattern.operationalGainScore,
+    },
+  }));
+
+  return {
+    generatedAt: validation.generatedAt || '2026-05-20',
+    summary: {
+      promoted: standards.length,
+      experiments: experiments.length,
+      reusableProjects: Array.from(new Set(standards.flatMap(item => item.reapplyProjects))),
+      blockedAutomations: experiments.length,
+    },
+    standards,
+    experiments,
+    agentAutomationGate: 'BLOQUEADO_PARA_PADROES_SEM_IMPACTO_VALIDADO',
+    decisionRule: 'Somente padroes de IA com impacto validado viram playbook, template, service ou agent interno; os demais continuam como experimento medido.',
+    impactAnalysis: {
+      technical: 'Alto: reduz criacao de agents duplicados e padroniza services comprovados.',
+      operation: 'Alto: transforma evidencia em artefatos reaproveitaveis.',
+      conversion: 'Medio: reaplica apenas padroes com ganho ou potencial comercial medido.',
+      profit: 'Alto: diminui custo marginal de entrega por reutilizacao comprovada.',
+      retention: 'Medio: melhora consistencia de entregas com padroes validados.',
+    },
+    learningEvent: {
+      source: 'mastermind_update',
+      event_type: 'ai_reuse_standardization_playbook',
+      title: 'Padronizacao de IA somente com impacto validado',
+      content: `${standards.length} padrao(oes) de IA promovido(s) para artefatos internos e ${experiments.length} mantido(s) como experimento ate novo ciclo de medicao.`,
+      signal_strength: 5,
+      tags: ['MasterMind', 'CEO', 'IA', 'Padrao', 'Reutilizacao', 'Governanca'],
+      metadata: {
+        source: 'ceo_mastermind_ai_reuse_standardization_playbook',
+        suggestionId: 'ceo_mastermind_ai_reuse_standardization_playbook',
+        promotedPatterns: standards.map(item => item.pattern),
+        blockedPatterns: experiments.map(item => item.pattern),
+        agentAutomationGate: 'BLOQUEADO_PARA_PADROES_SEM_IMPACTO_VALIDADO',
       },
     },
   };

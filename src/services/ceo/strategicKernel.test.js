@@ -9,6 +9,7 @@ import {
   createSecretEnvironmentMatrix,
   createAiReuseMatrix,
   createAiReuseImpactValidation,
+  createAiReuseStandardizationPlaybook,
   createCommercialImpactAudit,
   createCommercialGapExecutionBoard,
   createRevenueRetentionKpiBoard,
@@ -1183,7 +1184,7 @@ test('keeps suggesting improvements from new MasterMind knowledge after legacy s
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_autonomous_approval_governance'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_ai_integration_reuse_map'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_ai_reuse_validation_kpi'), false);
-  assert.ok(suggestions.some(item => item.id === 'ceo_mastermind_ai_reuse_standardization_playbook'));
+  assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_ai_reuse_standardization_playbook'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_revenue_retention_kpi_board'), false);
   assert.equal(suggestions.some(item => item.id === 'ceo_mastermind_revenue_kpi_validation_cycle'), false);
   assert.ok(suggestions.every(item => item.actionPlan?.length));
@@ -1417,6 +1418,52 @@ test('marks AI reuse validation KPI suggestion as implemented', () => {
     metadata: {
       source: 'ceo_strategic_kernel',
       suggestionId: 'ceo_mastermind_ai_reuse_validation_kpi',
+    },
+  }), false);
+});
+
+test('standardizes only AI patterns with validated impact', () => {
+  const validation = createAiReuseImpactValidation({
+    patterns: [
+      {
+        name: 'layout com IA',
+        projects: ['ArteNewEra', 'CapLead'],
+        timeSavedHours: 12,
+        reworkReductionPercent: 35,
+        conversionLiftPercent: 8,
+        proposedAgents: ['agent-layout-reuse'],
+      },
+      {
+        name: 'workflow agentico',
+        projects: ['Kentauros'],
+        timeSavedHours: 2,
+        reworkReductionPercent: 5,
+        conversionLiftPercent: 0,
+        proposedAgents: ['agent-workflow-lab'],
+      },
+    ],
+  });
+
+  const playbook = createAiReuseStandardizationPlaybook(validation);
+
+  assert.equal(playbook.summary.promoted, 1);
+  assert.equal(playbook.summary.experiments, 1);
+  assert.equal(playbook.standards[0].pattern, 'layout com IA');
+  assert.deepEqual(playbook.standards[0].artifacts.sort(), ['agent_internal', 'playbook', 'service', 'template']);
+  assert.ok(playbook.standards[0].reapplyProjects.includes('ArteNewEra'));
+  assert.equal(playbook.experiments[0].pattern, 'workflow agentico');
+  assert.equal(playbook.experiments[0].automationStatus, 'blocked_until_next_measurement_cycle');
+  assert.equal(playbook.agentAutomationGate, 'BLOQUEADO_PARA_PADROES_SEM_IMPACTO_VALIDADO');
+  assert.equal(playbook.learningEvent.metadata.source, 'ceo_mastermind_ai_reuse_standardization_playbook');
+});
+
+test('marks AI reuse standardization playbook suggestion as implemented', () => {
+  assert.equal(isActiveCeoApproval({
+    status: 'approved',
+    appliedStatus: 'awaiting_codex',
+    metadata: {
+      source: 'ceo_strategic_kernel',
+      suggestionId: 'ceo_mastermind_ai_reuse_standardization_playbook',
     },
   }), false);
 });
