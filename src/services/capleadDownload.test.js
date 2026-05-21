@@ -15,6 +15,27 @@ test('uses the configured CapLead download URL when available', () => {
   assert.equal(url, 'https://example.com/releases/CapLead.zip');
 });
 
+test('ignores localhost download configuration in production', () => {
+  const url = getCapLeadDownloadUrl({
+    DEV: false,
+    PROD: true,
+    VITE_CAPLEAD_DOWNLOAD_URL: 'http://localhost:3001/api/caplead/download',
+  });
+
+  assert.equal(url, '/api/caplead/download');
+});
+
+test('uses the production endpoint when Vercel build metadata is production', () => {
+  const url = getCapLeadDownloadUrl({
+    DEV: true,
+    PROD: false,
+    MODE: 'production',
+    VITE_VERCEL_ENV: 'production',
+  });
+
+  assert.equal(url, '/api/caplead/download');
+});
+
 test('falls back to the stable latest CapLead package path', () => {
   assert.equal(CAPLEAD_DEFAULT_DOWNLOAD_URL, '/downloads/caplead/latest/CapLead-latest.zip');
   assert.equal(getCapLeadDownloadUrl({ DEV: false }), '/api/caplead/download');
